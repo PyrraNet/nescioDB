@@ -12,6 +12,13 @@
   <img src="https://img.shields.io/badge/rust-1.75%2B-orange.svg" alt="Rust 1.75+">
 </p>
 
+<p align="center">
+  <a href="https://pyrranet.github.io/nescioDB/"><b>Documentation</b></a> ·
+  <a href="https://pyrranet.github.io/nescioDB/#tour">Five-minute tour</a> ·
+  <a href="https://pyrranet.github.io/nescioDB/#http">HTTP API</a> ·
+  <a href="https://docs.rs/nescio">Rust API</a>
+</p>
+
 ---
 
 **nescio** *(Latin: "I do not know")* is a **probabilistic database** for data that is uncertain, contradictory, and decaying — an embedded Rust library and HTTP/JSON server that stores ignorance as a first-class object. A field without evidence is not `NULL` — it is a region of maximal entropy. Evidence narrows regions, time widens them again, and the database can tell you which evidence to acquire next.
