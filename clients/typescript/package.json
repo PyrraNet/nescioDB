@@ -1,0 +1,25 @@
+{
+  "name": "nesciodb",
+  "version": "0.4.0",
+  "description": "TypeScript client for nescioDB — the database that knows what it doesn't know.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "example": "node examples/demo.ts"
+  },
+  "keywords": ["nesciodb", "database", "uncertainty", "probabilistic", "client"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
