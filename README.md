@@ -1,10 +1,8 @@
 <p align="center">
-  <img src="assets/nescio.png" alt="nescio" width="420">
+  <img src="assets/nescio.png" alt="nescioDB logo" width="420">
 </p>
 
-<p align="center">
-  <em>The database that knows what it doesn't know.</em>
-</p>
+<h1 align="center">nescioDB — the database that knows what it doesn't know</h1>
 
 <p align="center">
   <a href="https://crates.io/crates/nescio"><img src="https://img.shields.io/crates/v/nescio.svg" alt="crates.io"></a>
@@ -16,11 +14,9 @@
 
 ---
 
-**nescio** *(Latin: "I do not know")* stores ignorance as a first-class object. A field without evidence is not `NULL` — it is a region of maximal entropy. Evidence narrows regions, time widens them again, and the database can tell you which evidence to acquire next.
+**nescio** *(Latin: "I do not know")* is a **probabilistic database** for data that is uncertain, contradictory, and decaying — an embedded Rust library and HTTP/JSON server that stores ignorance as a first-class object. A field without evidence is not `NULL` — it is a region of maximal entropy. Evidence narrows regions, time widens them again, and the database can tell you which evidence to acquire next.
 
-Instead of values, you store **claims**: who said what, when, and how reliable they are. Everything else — regions, entropy, answers — is derived at query time. Every source has a half-life; old claims lose their grip on the data by physics, not by TTL. A classical relational database is the special case where every claim is an axiom and every region is a point.
-
-Built for data that is inherently uncertain, contradictory, and decaying: lead data, OSINT, sensor fusion, real-estate intelligence.
+Instead of values, you store **claims**: who said what, when, and how reliable they are. Everything else — credible regions, entropy in bits, answers — is derived at query time. Every source has a half-life; old claims lose their grip on the data by physics, not by TTL.
 
 ## The verbs
 
@@ -32,6 +28,16 @@ Built for data that is inherently uncertain, contradictory, and decaying: lead d
 | `find` | Which entities *certainly* / *possibly* lie in a range |
 | `join` | Entity pairs matching a relation — each with a probability *and* a three-valued certainty, because joining two regions is itself uncertain |
 | `certainly` | Three-valued predicates: `true` / `possible` / `false` |
+
+## Use cases
+
+Built for data that is inherently uncertain, contradictory, and decaying:
+
+- **Lead & company data** — enrichment from sources of mixed reliability; freshness is physics, not an `updated_at` column
+- **OSINT & investigations** — contradictory claims with provenance, and `resolve` tells you what to verify next
+- **Sensor fusion** — noisy measurements as intervals, fused across sources with per-source reliability
+- **Real-estate intelligence** — price regions instead of point guesses; comparable search as an uncertain join
+- **Entity resolution & deduplication** — `join --op same` scores candidate duplicates with a probability *and* a certainty
 
 ## Quick start
 
@@ -60,10 +66,10 @@ Joins compare uncertain regions, so each match carries a probability and a certa
 ```bash
 nescio join mydb --op approx --left price --right price --tol 50000   # comparable properties
 nescio join mydb --op gt --left price --right price --certain          # A certainly dearer than B
-nescio join mydb --op same --left city --right city                    # candidate duplicates
+nescio join mydb --op same --left city --right city                    # entity resolution: candidate duplicates
 ```
 
-## As a server
+## As a server (HTTP/JSON API)
 
 ```bash
 nescio serve mydb --port 7777
@@ -77,7 +83,7 @@ All verbs over HTTP/JSON, usable from any language. One process owns the databas
 
 Typed clients for [TypeScript](clients/typescript/) and [Java](clients/java/) wrap every verb — both zero-dependency.
 
-## As a library
+## As a Rust library
 
 ```rust
 use nescio::prelude::*;
@@ -90,6 +96,12 @@ let q = Query::new(&db, now_unix());
 let bound = q.bound("villa_1", "price", 0.95)?;
 println!("{:.2} bits", bound.entropy_bits);
 ```
+
+## How it compares
+
+- **vs. `NULL` in SQL** — `NULL` says only "no value". nescio says *how much* is unknown (entropy in bits), what is still credible (the region), and which evidence would shrink it. A classical relational database is the special case where every claim is an axiom and every region is a point.
+- **vs. probabilistic databases** (MayBMS, Trio, BayesDB) — those attach probabilities to tuples in otherwise clean tables. nescio models the *evidence itself* — source reliability, decay, contradiction — and derives distributions at query time, so forgetting a source is exact, not approximate.
+- **vs. TTL and cache expiry** — a TTL deletes at a cliff. Half-life decay widens uncertainty continuously: old data degrades gracefully instead of vanishing, and the database can report how stale is *too* stale for a given decision.
 
 ## Performance
 
