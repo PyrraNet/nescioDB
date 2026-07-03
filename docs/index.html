@@ -300,6 +300,7 @@ noscript ~ * .tabpanel[hidden] { display: block; }
   <a href="#couplings">Couplings</a>
   <a href="#axioms">Axioms &amp; conflict</a>
   <a href="#priors">Priors</a>
+  <a href="#schema-evolution">Schema evolution</a>
   <a href="#forgetting">Forgetting</a>
   <div class="group-label">the verbs</div>
   <a href="#bound"><code>bound</code></a>
@@ -571,6 +572,40 @@ HTTP 409</span></code></pre>
 <span class="c">$</span> nescio prior use mydb --entity villa_2 --slot price --name district_9</code></pre>
   <p>Arbitrary shapes go in via <code>--weights-file</code> (one weight per cell of the
   slot's domain).</p>
+</section>
+
+<!-- ===================================================== SCHEMA EVOLUTION -->
+<section id="schema-evolution">
+  <h2><span class="group-label">concepts</span>Schema evolution</h2>
+  <p>Nobody knows their schema on day one. A live database can grow and shrink —
+  and the model makes most of it cheap, because ignorance is the default state:</p>
+  <pre><code><span class="c">$</span> nescio schema add-slot mydb --name floor_area --continuous 20..600 --bins 116
+<span class="c">slot "floor_area" added (continuous [20, 600], 116 bins); every entity starts at maximal entropy</span>
+
+<span class="c">$</span> nescio schema add-value mydb --slot condition --value gutted
+<span class="c">value "gutted" added to slot "condition" (4 values now)</span>
+
+<span class="c">$</span> nescio schema add-coupling mydb --file coupling.json
+<span class="c">coupling sell~price added; it applies to every entity immediately</span></code></pre>
+  <ul>
+    <li><strong>Adding a slot needs no backfill</strong> — every existing entity simply
+    starts at maximal entropy on it. There is no <code>NULL</code> to migrate.</li>
+    <li><strong>Extending a categorical slot keeps history valid</strong> — the log
+    stores values as strings, not indices. Coupling tables are recompiled (a category
+    without an entry is uninformative), and priors on the slot are extended with the
+    mean of their existing weights.</li>
+    <li><strong>Changes are transactional</strong> — a coupling that fails validation
+    (unknown slot, wrong domain kind, misshapen table) is refused with nothing
+    committed. Like a contradicting axiom, a <em>valid</em> coupling that disagrees
+    with existing evidence surfaces at query time, not at schema time.</li>
+    <li><strong>Removing a slot cascades what is slot-local</strong> — its evidence is
+    physically erased (log rewrite, same mechanism as <a href="#forgetting">forgetting</a>)
+    and its priors go with it. Anything cross-slot is refused instead:
+    <code>remove-slot</code> on a coupled slot tells you to remove the coupling first.</li>
+  </ul>
+  <p>The same operations over HTTP: <code>POST /schema/add-slot</code>,
+  <code>/schema/add-value</code>, <code>/schema/add-coupling</code>,
+  <code>/schema/remove-coupling</code>, <code>/schema/remove-slot</code>.</p>
 </section>
 
 <!-- =========================================================== FORGETTING -->
@@ -890,6 +925,11 @@ villa_3</code></pre>
     <tr><td><code>POST /recalibrate</code></td><td><code>{source, apply?, min_truth_reliability?}</code></td></tr>
     <tr><td><code>POST /priors/register</code></td><td><code>{name, slot, weights}</code></td></tr>
     <tr><td><code>POST /priors/use</code></td><td><code>{entity, slot, name}</code></td></tr>
+    <tr><td><code>POST /schema/add-slot</code></td><td><code>{name, domain}</code> — domain as in <code>schema.json</code></td></tr>
+    <tr><td><code>POST /schema/remove-slot</code></td><td><code>{name}</code> — erases the slot's evidence and priors; refused while coupled</td></tr>
+    <tr><td><code>POST /schema/add-value</code></td><td><code>{slot, value}</code> — categorical slots</td></tr>
+    <tr><td><code>POST /schema/add-coupling</code></td><td><code>{slot_a, slot_b, compat, name?}</code></td></tr>
+    <tr><td><code>POST /schema/remove-coupling</code></td><td><code>{name}</code> — by label</td></tr>
   </table></div>
   <p><code>at</code> accepts <code>"YYYY-MM-DD"</code>, a date-time, or unix seconds —
   in query strings and JSON bodies alike; it defaults to now. Status codes:</p>
@@ -925,6 +965,7 @@ villa_3</code></pre>
     <tr><td><code>resolve</code></td><td>plan evidence to reach <code>--target-bits</code>, given <code>--actions</code></td></tr>
     <tr><td><code>decide</code></td><td>plan evidence against an <code>--objective</code>, target in its risk units</td></tr>
     <tr><td><code>prior register / use</code></td><td>shared priors (<code>--gaussian CENTER,SIGMA</code> or <code>--weights-file</code>)</td></tr>
+    <tr><td><code>schema add-slot / remove-slot / add-value / add-coupling / remove-coupling</code></td><td>evolve a live database — see <a href="#schema-evolution">schema evolution</a></td></tr>
     <tr><td><code>forget-source</code></td><td>GDPR erasure; all derived regions widen</td></tr>
     <tr><td><code>recalibrate</code></td><td>learn a source's r0 / half-life from ground truth (<code>--apply</code>)</td></tr>
     <tr><td><code>import / export</code></td><td>JSONL in (one group commit) / JSONL out</td></tr>

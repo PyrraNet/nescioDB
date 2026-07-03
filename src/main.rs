@@ -217,6 +217,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PriorCmd,
     },
+    /// Evolve the schema of a live database
+    Schema {
+        #[command(subcommand)]
+        cmd: SchemaCmd,
+    },
     /// GDPR erasure: physically remove all evidence from a source
     ForgetSource {
         dir: PathBuf,
@@ -273,6 +278,53 @@ enum PriorCmd {
         entity: String,
         #[arg(long)]
         slot: String,
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SchemaCmd {
+    /// Add a slot; existing entities start at maximal entropy on it
+    AddSlot {
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+        /// Continuous domain "LO..HI" (bin count via --bins)
+        #[arg(long)]
+        continuous: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        bins: usize,
+        /// Categorical domain: comma-separated values
+        #[arg(long)]
+        categorical: Option<String>,
+        /// Shortcut for --categorical true,false
+        #[arg(long)]
+        boolean: bool,
+    },
+    /// Remove a slot, its evidence (physically) and its priors
+    RemoveSlot {
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+    },
+    /// Add a value to a categorical slot; history stays valid
+    AddValue {
+        dir: PathBuf,
+        #[arg(long)]
+        slot: String,
+        #[arg(long)]
+        value: String,
+    },
+    /// Add a coupling from a JSON file ({slot_a, slot_b, compat, name?})
+    AddCoupling {
+        dir: PathBuf,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Remove a coupling by its label (see `nescio status`)
+    RemoveCoupling {
+        dir: PathBuf,
         #[arg(long)]
         name: String,
     },
@@ -742,6 +794,82 @@ fn run(cli: Cli) -> Result<()> {
                 let mut db = Db::open(&dir)?;
                 db.use_prior(&entity, &slot, &name)?;
                 println!("entity {entity:?} now shares prior {name:?} on {slot:?}");
+                Ok(())
+            }
+        },
+        Cmd::Schema { cmd } => match cmd {
+            SchemaCmd::AddSlot {
+                dir,
+                name,
+                continuous,
+                bins,
+                categorical,
+                boolean,
+            } => {
+                let domain = match (continuous, categorical, boolean) {
+                    (Some(range), None, false) => {
+                        let (lo, hi) = parse_pair(&range, '.')?;
+                        Domain::Continuous {
+                            lo,
+                            hi,
+                            n_bins: bins,
+                        }
+                    }
+                    (None, Some(vals), false) => Domain::Categorical {
+                        values: vals.split(',').map(|v| v.trim().to_string()).collect(),
+                    },
+                    (None, None, true) => Domain::boolean(),
+                    _ => {
+                        return Err(Error::Invalid(
+                            "use exactly one of --continuous / --categorical / --boolean".into(),
+                        ))
+                    }
+                };
+                let mut db = Db::open(&dir)?;
+                let describe = match &domain {
+                    Domain::Continuous { lo, hi, n_bins } => {
+                        format!("continuous [{lo}, {hi}], {n_bins} bins")
+                    }
+                    Domain::Categorical { values } => format!("categorical {values:?}"),
+                };
+                db.add_slot(&name, domain)?;
+                println!(
+                    "slot {name:?} added ({describe}); every entity starts at maximal entropy"
+                );
+                Ok(())
+            }
+            SchemaCmd::RemoveSlot { dir, name } => {
+                let mut db = Db::open(&dir)?;
+                let r = db.remove_slot(&name)?;
+                println!(
+                    "removed slot {name:?}: physically erased {} evidence records, removed {} priors",
+                    r.evidence_erased, r.priors_removed
+                );
+                Ok(())
+            }
+            SchemaCmd::AddValue { dir, slot, value } => {
+                let mut db = Db::open(&dir)?;
+                let extended = db.add_value(&slot, &value)?;
+                let n = db.domain(&slot)?.n();
+                print!("value {value:?} added to slot {slot:?} ({n} values now)");
+                if extended > 0 {
+                    print!("; {extended} priors extended with their mean weight");
+                }
+                println!();
+                Ok(())
+            }
+            SchemaCmd::AddCoupling { dir, file } => {
+                let coupling: Coupling = read_json_file(&file)?;
+                let label = coupling.label();
+                let mut db = Db::open(&dir)?;
+                db.add_coupling(coupling)?;
+                println!("coupling {label} added; it applies to every entity immediately");
+                Ok(())
+            }
+            SchemaCmd::RemoveCoupling { dir, name } => {
+                let mut db = Db::open(&dir)?;
+                db.remove_coupling(&name)?;
+                println!("coupling {name} removed; the affected slots decouple");
                 Ok(())
             }
         },

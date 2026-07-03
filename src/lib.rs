@@ -72,5 +72,5 @@ pub mod prelude {
     pub use crate::model::coupling::{Compat, Coupling};
     pub use crate::model::domain::Domain;
     pub use crate::model::evidence::{Claim, Evidence, EvidenceRecord, Source};
-    pub use crate::store::{Db, PriorDef, Priors, Schema};
+    pub use crate::store::{Db, PriorDef, Priors, Schema, SlotRemoval};
 }

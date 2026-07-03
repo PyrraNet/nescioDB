@@ -185,6 +185,76 @@ fn http_api_end_to_end() {
 }
 
 #[test]
+fn schema_evolution_over_http() {
+    let port = start_server();
+
+    // Add a categorical slot, extend it, couple it to price.
+    let (status, _) = request(
+        port,
+        "POST",
+        "/schema/add-slot",
+        r#"{"name":"condition","domain":{"type":"categorical","values":["renovated","original"]}}"#,
+    );
+    assert_eq!(status, 200);
+    let (status, _) = request(
+        port,
+        "POST",
+        "/schema/add-value",
+        r#"{"slot":"condition","value":"derelict"}"#,
+    );
+    assert_eq!(status, 200);
+    let (status, _) = request(
+        port,
+        "POST",
+        "/schema/add-coupling",
+        r#"{"slot_a":"condition","slot_b":"price",
+            "compat":{"kind":"gaussian_by_category",
+                      "centers":{"renovated":900000,"derelict":100000},"sigma":150000}}"#,
+    );
+    assert_eq!(status, 200);
+
+    // Knowledge flows through the new coupling: condition evidence
+    // narrows the price posterior.
+    request(
+        port,
+        "POST",
+        "/ingest",
+        r#"{"entity":"s1","claim":{"type":"value","slot":"condition","value":"derelict"},"source":"registry_a","at":0}"#,
+    );
+    let (_, body) = request(port, "GET", "/bound?entity=s1&slot=price&at=86400", "");
+    let b: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(b["entropy_bits"].as_f64().unwrap() < b["max_entropy_bits"].as_f64().unwrap());
+
+    // Removing a coupled slot is refused; decouple first, then it works
+    // and the slot's evidence is gone.
+    let (status, body) = request(
+        port,
+        "POST",
+        "/schema/remove-slot",
+        r#"{"name":"condition"}"#,
+    );
+    assert_eq!(status, 400);
+    assert!(body.contains("remove the coupling first"));
+    let (status, _) = request(
+        port,
+        "POST",
+        "/schema/remove-coupling",
+        r#"{"name":"condition~price"}"#,
+    );
+    assert_eq!(status, 200);
+    let (status, body) = request(
+        port,
+        "POST",
+        "/schema/remove-slot",
+        r#"{"name":"condition"}"#,
+    );
+    assert_eq!(status, 200);
+    assert!(body.contains("\"evidence_erased\":1"));
+    let (status, _) = request(port, "GET", "/bound?entity=s1&slot=condition&at=86400", "");
+    assert_eq!(status, 400); // unknown slot now
+}
+
+#[test]
 fn concurrent_reads_and_batch_ingest() {
     let port = start_server();
 

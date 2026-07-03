@@ -1354,3 +1354,276 @@ fn join_wrong_domain_kind_is_rejected() {
         )
         .is_err());
 }
+
+// ------------------------------------------------------- schema evolution
+
+fn condition_domain() -> Domain {
+    Domain::Categorical {
+        values: vec!["renovated".into(), "original".into(), "derelict".into()],
+    }
+}
+
+fn condition_price_coupling() -> Coupling {
+    Coupling {
+        slot_a: "condition".into(),
+        slot_b: "price".into(),
+        compat: Compat::GaussianByCategory {
+            centers: [
+                ("renovated".to_string(), 900_000.0),
+                ("derelict".to_string(), 100_000.0),
+            ]
+            .into_iter()
+            .collect(),
+            sigma: 150_000.0,
+        },
+        name: None,
+    }
+}
+
+#[test]
+fn added_slot_starts_at_maximal_entropy_then_narrows() {
+    let mut db = make_db(vec![source("broker", 0.9, Some(90.0))]);
+    ingest(
+        &mut db,
+        "obj1",
+        interval("price", 400_000.0, 500_000.0),
+        "broker",
+        0.0,
+    );
+    db.add_slot("floor_area", price_domain()).unwrap();
+
+    let q = Query::new(&db, day(1.0));
+    let b = q.bound("obj1", "floor_area", 0.95).unwrap();
+    assert!((b.entropy_bits - b.max_entropy_bits).abs() < 1e-9);
+
+    ingest(
+        &mut db,
+        "obj1",
+        interval("floor_area", 100_000.0, 200_000.0),
+        "broker",
+        1.0,
+    );
+    let q = Query::new(&db, day(1.0));
+    let b = q.bound("obj1", "floor_area", 0.95).unwrap();
+    assert!(b.entropy_bits < b.max_entropy_bits);
+}
+
+#[test]
+fn add_slot_rejects_duplicates_and_bad_domains() {
+    let mut db = make_db(vec![]);
+    assert!(db.add_slot("price", price_domain()).is_err());
+    assert!(db
+        .add_slot(
+            "bad",
+            Domain::Continuous {
+                lo: 10.0,
+                hi: 5.0,
+                n_bins: 100
+            }
+        )
+        .is_err());
+    assert!(db.add_slot("price", price_domain()).is_err());
+}
+
+#[test]
+fn added_coupling_flows_knowledge_and_removal_restores_independence() {
+    let mut db = make_db(vec![axiom("notary")]);
+    db.add_slot("condition", condition_domain()).unwrap();
+    ingest(
+        &mut db,
+        "obj1",
+        value("condition", "renovated"),
+        "notary",
+        0.0,
+    );
+
+    let before = Query::new(&db, day(1.0))
+        .bound("obj1", "price", 0.95)
+        .unwrap();
+    assert!((before.entropy_bits - before.max_entropy_bits).abs() < 1e-9);
+
+    db.add_coupling(condition_price_coupling()).unwrap();
+    let coupled = Query::new(&db, day(1.0))
+        .bound("obj1", "price", 0.95)
+        .unwrap();
+    assert!(coupled.entropy_bits < before.entropy_bits);
+
+    db.remove_coupling("condition~price").unwrap();
+    let after = Query::new(&db, day(1.0))
+        .bound("obj1", "price", 0.95)
+        .unwrap();
+    assert!((after.entropy_bits - before.entropy_bits).abs() < 1e-9);
+}
+
+#[test]
+fn add_coupling_validates_slots_and_labels() {
+    let mut db = make_db(vec![]);
+    db.add_slot("condition", condition_domain()).unwrap();
+
+    let mut unknown = condition_price_coupling();
+    unknown.slot_b = "nope".into();
+    assert!(db.add_coupling(unknown).is_err());
+    assert!(db.schema.couplings.is_empty()); // nothing committed
+
+    db.add_coupling(condition_price_coupling()).unwrap();
+    assert!(db.add_coupling(condition_price_coupling()).is_err()); // duplicate label
+    assert!(db.remove_coupling("no~such").is_err());
+}
+
+#[test]
+fn remove_slot_refuses_while_coupled() {
+    let mut db = make_db(vec![]);
+    db.add_slot("condition", condition_domain()).unwrap();
+    db.add_coupling(condition_price_coupling()).unwrap();
+    assert!(db.remove_slot("condition").is_err());
+    db.remove_coupling("condition~price").unwrap();
+    assert!(db.remove_slot("condition").is_ok());
+}
+
+#[test]
+fn add_value_extends_domain_couplings_and_priors() {
+    let mut db = make_db(vec![axiom("notary")]);
+    db.add_slot("condition", condition_domain()).unwrap();
+    db.add_coupling(condition_price_coupling()).unwrap();
+    db.register_prior("cond", "condition", vec![4.0, 2.0, 0.0])
+        .unwrap();
+    db.use_prior("obj1", "condition", "cond").unwrap();
+
+    let extended = db.add_value("condition", "gutted").unwrap();
+    assert_eq!(extended, 1);
+    assert_eq!(db.domain("condition").unwrap().n(), 4);
+    // The prior grew by its mean weight; the new value is not impossible,
+    // and an axiom can collapse the region onto it.
+    ingest(&mut db, "obj2", value("condition", "gutted"), "notary", 0.0);
+    let b = Query::new(&db, day(1.0))
+        .bound("obj2", "condition", 0.95)
+        .unwrap();
+    let Region::Values(vals) = &b.region else {
+        panic!("expected categorical region")
+    };
+    assert_eq!(vals, &vec!["gutted".to_string()]);
+
+    // Errors: continuous slot, duplicate value, unknown slot.
+    assert!(db.add_value("price", "x").is_err());
+    assert!(db.add_value("condition", "gutted").is_err());
+    assert!(db.add_value("nope", "x").is_err());
+}
+
+#[test]
+fn add_value_is_transactional_under_explicit_table_coupling() {
+    let mut db = make_db(vec![]);
+    db.add_slot("condition", condition_domain()).unwrap();
+    db.add_coupling(Coupling {
+        slot_a: "condition".into(),
+        slot_b: "wants_to_sell".into(),
+        compat: Compat::Table {
+            rows: vec![vec![1.0, 1.0], vec![1.0, 1.0], vec![0.2, 1.0]],
+        },
+        name: None,
+    })
+    .unwrap();
+    // An explicit 3x2 table cannot absorb a fourth category: refused,
+    // and the domain must be unchanged.
+    assert!(db.add_value("condition", "gutted").is_err());
+    assert_eq!(db.domain("condition").unwrap().n(), 3);
+}
+
+#[test]
+fn schema_evolution_persists_across_reopen() {
+    let dir = std::env::temp_dir().join(format!("nescio-schema-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let mut slots = BTreeMap::new();
+        slots.insert("price".to_string(), price_domain());
+        let mut db = Db::init(
+            &dir,
+            Schema {
+                slots,
+                couplings: vec![],
+            },
+            vec![source("broker", 0.9, Some(90.0)), axiom("notary")],
+        )
+        .unwrap();
+        ingest(
+            &mut db,
+            "obj1",
+            interval("price", 400_000.0, 500_000.0),
+            "broker",
+            0.0,
+        );
+        db.add_slot("condition", condition_domain()).unwrap();
+        db.add_coupling(condition_price_coupling()).unwrap();
+        db.add_value("condition", "gutted").unwrap();
+        ingest(&mut db, "obj1", value("condition", "gutted"), "notary", 0.0);
+    }
+    let db = Db::open(&dir).unwrap();
+    assert_eq!(db.domain("condition").unwrap().n(), 4);
+    assert_eq!(db.schema.couplings.len(), 1);
+    assert_eq!(db.evidence.len(), 2);
+    let b = Query::new(&db, day(1.0))
+        .bound("obj1", "condition", 0.95)
+        .unwrap();
+    assert!(b.entropy_bits < b.max_entropy_bits);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn remove_slot_erases_evidence_and_priors_physically() {
+    let dir = std::env::temp_dir().join(format!("nescio-rmslot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let mut slots = BTreeMap::new();
+        slots.insert("price".to_string(), price_domain());
+        slots.insert("floor_area".to_string(), price_domain());
+        let mut db = Db::init(
+            &dir,
+            Schema {
+                slots,
+                couplings: vec![],
+            },
+            vec![source("broker", 0.9, Some(90.0))],
+        )
+        .unwrap();
+        ingest(
+            &mut db,
+            "obj1",
+            interval("price", 400_000.0, 500_000.0),
+            "broker",
+            0.0,
+        );
+        ingest(
+            &mut db,
+            "obj1",
+            interval("floor_area", 100.0, 200.0),
+            "broker",
+            0.0,
+        );
+        ingest(
+            &mut db,
+            "only_area",
+            interval("floor_area", 100.0, 200.0),
+            "broker",
+            0.0,
+        );
+        let dom = price_domain();
+        db.register_prior(
+            "area_prior",
+            "floor_area",
+            (0..dom.n()).map(|_| 1.0).collect(),
+        )
+        .unwrap();
+        db.use_prior("obj1", "floor_area", "area_prior").unwrap();
+
+        let r = db.remove_slot("floor_area").unwrap();
+        assert_eq!(r.evidence_erased, 2);
+        assert_eq!(r.priors_removed, 1);
+        assert!(db.remove_slot("floor_area").is_err()); // already gone
+    }
+    // Reopen: the log was rewritten, so replay must not see the dead slot.
+    let db = Db::open(&dir).unwrap();
+    assert_eq!(db.evidence.len(), 1);
+    assert!(db.domain("floor_area").is_err());
+    // The entity that only existed through the removed slot is gone too.
+    assert!(!db.entities().any(|e| e == "only_area"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

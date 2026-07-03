@@ -2,7 +2,9 @@
 //!
 //! ```text
 //! mydb/
-//!   schema.json    slots (domains) + couplings — fixed at init
+//!   schema.json    slots (domains) + couplings — set at init, evolvable
+//!                  afterwards (add_slot, add_value, add/remove_coupling,
+//!                  remove_slot)
 //!   sources.json   source registry: reliability, half-life, axiomatic
 //!   priors.json    shared priors: registry + per-entity assignments
 //!   log.bin        append-only evidence log, compact binary (see binlog)
@@ -68,6 +70,15 @@ pub struct Priors {
     /// slot -> weights, applied to every entity without an assignment
     #[serde(default)]
     pub defaults: BTreeMap<String, Vec<f64>>,
+}
+
+/// What [`Db::remove_slot`] took with it.
+#[derive(Clone, Copy, Debug)]
+pub struct SlotRemoval {
+    /// Evidence records physically erased (the log was rewritten).
+    pub evidence_erased: usize,
+    /// Priors (registry entries and slot defaults) removed with the slot.
+    pub priors_removed: usize,
 }
 
 pub struct Db {
@@ -170,35 +181,7 @@ impl Db {
             s.validate()?;
             source_map.insert(s.name.clone(), s);
         }
-        // Compile coupling tables and the adjacency map; detect cycles.
-        let mut tables = Vec::new();
-        let mut adjacency: BTreeMap<String, Vec<(String, usize)>> = BTreeMap::new();
-        for (ci, c) in schema.couplings.iter().enumerate() {
-            let da = schema.slots.get(&c.slot_a).ok_or_else(|| {
-                Error::Invalid(format!(
-                    "coupling {} references unknown slot {:?}",
-                    c.label(),
-                    c.slot_a
-                ))
-            })?;
-            let db_ = schema.slots.get(&c.slot_b).ok_or_else(|| {
-                Error::Invalid(format!(
-                    "coupling {} references unknown slot {:?}",
-                    c.label(),
-                    c.slot_b
-                ))
-            })?;
-            tables.push(c.build_table(da, db_)?);
-            adjacency
-                .entry(c.slot_a.clone())
-                .or_default()
-                .push((c.slot_b.clone(), ci));
-            adjacency
-                .entry(c.slot_b.clone())
-                .or_default()
-                .push((c.slot_a.clone(), ci));
-        }
-        let loopy = has_cycle(&schema);
+        let (tables, adjacency, loopy) = compile_couplings(&schema)?;
         let mut db = Db {
             dir,
             schema,
@@ -349,6 +332,161 @@ impl Db {
         self.priors.defaults.get(slot).map(|w| w.as_slice())
     }
 
+    // ----------------------------------------------------- schema evolution
+
+    /// Add a slot to a live database. No backfill is needed: ignorance is
+    /// the default state, so every existing entity simply starts at maximal
+    /// entropy on the new slot.
+    pub fn add_slot(&mut self, name: &str, domain: Domain) -> Result<()> {
+        if self.schema.slots.contains_key(name) {
+            return Err(Error::Invalid(format!("slot {name:?} already exists")));
+        }
+        domain.validate(name)?;
+        self.schema.slots.insert(name.to_string(), domain);
+        self.persist_schema()
+    }
+
+    /// Remove a slot together with everything that only has meaning through
+    /// it: its evidence (physically, with a log rewrite — a record on an
+    /// unknown slot would fail replay) and its priors. Couplings are
+    /// cross-slot and are never removed implicitly: drop them first.
+    pub fn remove_slot(&mut self, name: &str) -> Result<SlotRemoval> {
+        self.domain(name)?;
+        if let Some(c) = self
+            .schema
+            .couplings
+            .iter()
+            .find(|c| c.slot_a == name || c.slot_b == name)
+        {
+            return Err(Error::Invalid(format!(
+                "slot {name:?} is referenced by coupling {}; remove the coupling first",
+                c.label()
+            )));
+        }
+        let before = self.evidence.len();
+        self.evidence.retain(|e| e.claim.slot() != name);
+        let evidence_erased = before - self.evidence.len();
+        let mut priors_removed = 0;
+        let orphaned: Vec<String> = self
+            .priors
+            .registry
+            .iter()
+            .filter(|(_, d)| d.slot == name)
+            .map(|(n, _)| n.clone())
+            .collect();
+        for n in &orphaned {
+            self.priors.registry.remove(n);
+            priors_removed += 1;
+        }
+        if self.priors.defaults.remove(name).is_some() {
+            priors_removed += 1;
+        }
+        for slots in self.priors.assignments.values_mut() {
+            slots.remove(name);
+        }
+        self.priors.assignments.retain(|_, m| !m.is_empty());
+        self.schema.slots.remove(name);
+        self.rebuild_index();
+        if evidence_erased > 0 {
+            self.rewrite_log()?;
+        }
+        self.persist_schema()?;
+        self.persist_priors()?;
+        Ok(SlotRemoval {
+            evidence_erased,
+            priors_removed,
+        })
+    }
+
+    /// Extend a categorical slot with a new value. History stays valid —
+    /// the log stores values as strings, not indices. Coupling tables are
+    /// recompiled (a category without an entry is uninformative); priors on
+    /// the slot are extended with the mean of their existing weights, a
+    /// neutral choice. Returns how many priors were extended.
+    pub fn add_value(&mut self, slot: &str, value: &str) -> Result<usize> {
+        let mut schema = self.schema.clone();
+        let domain = schema
+            .slots
+            .get_mut(slot)
+            .ok_or_else(|| Error::Invalid(format!("unknown slot {slot:?}")))?;
+        let Domain::Categorical { values } = domain else {
+            return Err(Error::Invalid(format!(
+                "slot {slot:?} is continuous; add_value needs a categorical slot"
+            )));
+        };
+        if values.iter().any(|v| v == value) {
+            return Err(Error::Invalid(format!(
+                "slot {slot:?} already has value {value:?}"
+            )));
+        }
+        values.push(value.to_string());
+        // Validate before committing: an explicit Table coupling has fixed
+        // dimensions and rejects the grown domain here.
+        let (tables, adjacency, loopy) = compile_couplings(&schema)?;
+        self.schema = schema;
+        self.tables = tables;
+        self.adjacency = adjacency;
+        self.loopy = loopy;
+        let mut extended = 0;
+        for def in self.priors.registry.values_mut() {
+            if def.slot == slot {
+                let mean = def.weights.iter().sum::<f64>() / def.weights.len() as f64;
+                def.weights.push(mean);
+                extended += 1;
+            }
+        }
+        if let Some(w) = self.priors.defaults.get_mut(slot) {
+            let mean = w.iter().sum::<f64>() / w.len() as f64;
+            w.push(mean);
+            extended += 1;
+        }
+        self.persist_schema()?;
+        if extended > 0 {
+            self.persist_priors()?;
+        }
+        Ok(extended)
+    }
+
+    /// Add a coupling to a live database. Schema-level: it applies to every
+    /// entity immediately. Like a contradicting axiom, a coupling that is
+    /// incompatible with existing evidence surfaces as a conflict at query
+    /// time, not here — contradiction is a state, not an ingest error.
+    pub fn add_coupling(&mut self, c: Coupling) -> Result<()> {
+        if self.schema.couplings.iter().any(|x| x.label() == c.label()) {
+            return Err(Error::Invalid(format!(
+                "a coupling labelled {} already exists",
+                c.label()
+            )));
+        }
+        let mut schema = self.schema.clone();
+        schema.couplings.push(c);
+        let (tables, adjacency, loopy) = compile_couplings(&schema)?;
+        self.schema = schema;
+        self.tables = tables;
+        self.adjacency = adjacency;
+        self.loopy = loopy;
+        self.persist_schema()
+    }
+
+    /// Remove a coupling by its label (`nescio status` lists them). The
+    /// affected slots decouple; their evidence is untouched.
+    pub fn remove_coupling(&mut self, label: &str) -> Result<()> {
+        let idx = self
+            .schema
+            .couplings
+            .iter()
+            .position(|c| c.label() == label)
+            .ok_or_else(|| Error::Invalid(format!("no coupling labelled {label:?}")))?;
+        let mut schema = self.schema.clone();
+        schema.couplings.remove(idx);
+        let (tables, adjacency, loopy) = compile_couplings(&schema)?;
+        self.schema = schema;
+        self.tables = tables;
+        self.adjacency = adjacency;
+        self.loopy = loopy;
+        self.persist_schema()
+    }
+
     // ---------------------------------------------------------- calibration
 
     /// Learn a source's decay physics from ground truth in the log.
@@ -489,6 +627,47 @@ impl Db {
         let json = serde_json::to_string_pretty(value)?;
         atomic_write(&dir.join(file), json.as_bytes())
     }
+}
+
+/// Compile coupling tables and the adjacency map; detect cycles. Pure in
+/// the schema, so schema evolution can validate a candidate before
+/// committing anything.
+#[allow(clippy::type_complexity)]
+fn compile_couplings(
+    schema: &Schema,
+) -> Result<(
+    Vec<Vec<Vec<f64>>>,
+    BTreeMap<String, Vec<(String, usize)>>,
+    bool,
+)> {
+    let mut tables = Vec::new();
+    let mut adjacency: BTreeMap<String, Vec<(String, usize)>> = BTreeMap::new();
+    for (ci, c) in schema.couplings.iter().enumerate() {
+        let da = schema.slots.get(&c.slot_a).ok_or_else(|| {
+            Error::Invalid(format!(
+                "coupling {} references unknown slot {:?}",
+                c.label(),
+                c.slot_a
+            ))
+        })?;
+        let db_ = schema.slots.get(&c.slot_b).ok_or_else(|| {
+            Error::Invalid(format!(
+                "coupling {} references unknown slot {:?}",
+                c.label(),
+                c.slot_b
+            ))
+        })?;
+        tables.push(c.build_table(da, db_)?);
+        adjacency
+            .entry(c.slot_a.clone())
+            .or_default()
+            .push((c.slot_b.clone(), ci));
+        adjacency
+            .entry(c.slot_b.clone())
+            .or_default()
+            .push((c.slot_a.clone(), ci));
+    }
+    Ok((tables, adjacency, has_cycle(schema)))
 }
 
 fn check_prior(slot: &str, weights: &[f64], domain: &Domain) -> Result<()> {

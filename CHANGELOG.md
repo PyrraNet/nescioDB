@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Schema evolution.** A live database can now grow and shrink:
+  `nescio schema add-slot | remove-slot | add-value | add-coupling |
+  remove-coupling`, the matching `POST /schema/*` routes, and the
+  corresponding `Db` methods. Adding a slot needs no backfill (every entity
+  starts at maximal entropy); extending a categorical slot keeps history
+  valid (the log stores values as strings) and recompiles coupling tables;
+  removing a slot physically erases its evidence and priors, and is refused
+  while a coupling references the slot. All changes validate before they
+  commit.
+
 ## [0.6.0] — 2026-07-03
 
 ### Added

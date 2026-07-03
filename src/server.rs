@@ -23,6 +23,11 @@
 //! POST /recalibrate    {source, apply?, min_truth_reliability?}
 //! POST /priors/register {name, slot, weights}
 //! POST /priors/use      {entity, slot, name}
+//! POST /schema/add-slot        {name, domain}
+//! POST /schema/remove-slot     {name}
+//! POST /schema/add-value       {slot, value}
+//! POST /schema/add-coupling    {slot_a, slot_b, compat, name?}
+//! POST /schema/remove-coupling {name}
 //! ```
 //!
 //! `at` accepts "YYYY-MM-DD", a date-time, or unix seconds; default now.
@@ -38,6 +43,8 @@ use crate::engine::{
     FindMode, JoinOptions, JoinPredicate, Objective, Predicate, ProcurementAction, Query,
 };
 use crate::error::{Error, Result};
+use crate::model::coupling::Coupling;
+use crate::model::domain::Domain;
 use crate::model::evidence::{Claim, EvidenceRecord, Source};
 use crate::store::Db;
 use crate::time::{now_unix, parse_when};
@@ -376,6 +383,54 @@ fn route_write(db: &mut Db, method: &str, path: &str, body: &str) -> Result<Stri
             }
             let b: Body = from_body(body)?;
             db.register_prior(&b.name, &b.slot, b.weights)?;
+            Ok(json!({"ok": true}).to_string())
+        }
+        ("POST", "/schema/add-slot") => {
+            #[derive(Deserialize)]
+            struct Body {
+                name: String,
+                domain: Domain,
+            }
+            let b: Body = from_body(body)?;
+            db.add_slot(&b.name, b.domain)?;
+            Ok(json!({"ok": true}).to_string())
+        }
+        ("POST", "/schema/remove-slot") => {
+            #[derive(Deserialize)]
+            struct Body {
+                name: String,
+            }
+            let b: Body = from_body(body)?;
+            let r = db.remove_slot(&b.name)?;
+            Ok(json!({
+                "ok": true,
+                "evidence_erased": r.evidence_erased,
+                "priors_removed": r.priors_removed,
+            })
+            .to_string())
+        }
+        ("POST", "/schema/add-value") => {
+            #[derive(Deserialize)]
+            struct Body {
+                slot: String,
+                value: String,
+            }
+            let b: Body = from_body(body)?;
+            let extended = db.add_value(&b.slot, &b.value)?;
+            Ok(json!({"ok": true, "priors_extended": extended}).to_string())
+        }
+        ("POST", "/schema/add-coupling") => {
+            let c: Coupling = from_body(body)?;
+            db.add_coupling(c)?;
+            Ok(json!({"ok": true}).to_string())
+        }
+        ("POST", "/schema/remove-coupling") => {
+            #[derive(Deserialize)]
+            struct Body {
+                name: String,
+            }
+            let b: Body = from_body(body)?;
+            db.remove_coupling(&b.name)?;
             Ok(json!({"ok": true}).to_string())
         }
         ("POST", "/priors/use") => {
