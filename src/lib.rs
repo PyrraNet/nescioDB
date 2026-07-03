@@ -20,6 +20,9 @@
 //!   data procurement, across slot boundaries, Monte-Carlo-validated.
 //! - **FIND** — [`engine::Query::find`]: region queries across entities
 //!   ("all objects whose price certainly lies below 600k").
+//! - **JOIN** — [`engine::Query::join`]: entity pairs matching a relation,
+//!   each with a probability *and* a three-valued certainty — joining two
+//!   regions is itself uncertain.
 //! - **certainly** — [`engine::Query::certainly`]: three-valued predicates
 //!   as region containment: `true` / `possible` / `false`.
 //!

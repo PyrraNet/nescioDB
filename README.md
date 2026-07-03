@@ -7,6 +7,9 @@
 </p>
 
 <p align="center">
+  <a href="https://crates.io/crates/nescio"><img src="https://img.shields.io/crates/v/nescio.svg" alt="crates.io"></a>
+  <a href="https://docs.rs/nescio"><img src="https://img.shields.io/docsrs/nescio" alt="docs.rs"></a>
+  <a href="https://github.com/PyrraNet/nescioDB/actions/workflows/ci.yml"><img src="https://github.com/PyrraNet/nescioDB/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/rust-1.75%2B-orange.svg" alt="Rust 1.75+">
 </p>
@@ -33,7 +36,7 @@ Built for data that is inherently uncertain, contradictory, and decaying: lead d
 ## Quick start
 
 ```bash
-cargo install --path .
+cargo install nescio
 
 nescio init mydb --template real-estate
 

@@ -29,7 +29,7 @@ pub enum Compat {
         centers: BTreeMap<String, f64>,
         sigma: f64,
     },
-    /// Both categorical: weights[a][b], missing entries fall back to `default`.
+    /// Both categorical: `weights[a][b]`, missing entries fall back to `default`.
     Matrix {
         weights: BTreeMap<String, BTreeMap<String, f64>>,
         #[serde(default = "one")]

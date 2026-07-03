@@ -197,17 +197,17 @@ pub struct DecisionPlan {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum JoinPredicate {
-    /// left.<a> > right.<b>  (numeric)
+    /// `left.<a> > right.<b>`  (numeric)
     Gt { left: String, right: String },
-    /// left.<a> < right.<b>  (numeric)
+    /// `left.<a> < right.<b>`  (numeric)
     Lt { left: String, right: String },
-    /// |left.<a> - right.<b>| <= tol  (numeric similarity / fuzzy match)
+    /// `|left.<a> - right.<b>| <= tol`  (numeric similarity / fuzzy match)
     Approx {
         left: String,
         right: String,
         tol: f64,
     },
-    /// left.<a> == right.<b>  (categorical; entity resolution)
+    /// `left.<a> == right.<b>`  (categorical; entity resolution)
     Same { left: String, right: String },
 }
 

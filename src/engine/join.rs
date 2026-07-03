@@ -16,7 +16,7 @@
 //! Pruning uses the same support hulls as FIND: a pair is examined only
 //! when the predicate is regionally *possible*. An unselective join
 //! (every region overlaps every other) is quadratic — fundamental to
-//! joins, SQL included — so evaluation is capped at [`MAX_PAIRS`] and the
+//! joins, SQL included — so evaluation is capped at `MAX_PAIRS` and the
 //! cap is reported, never silently applied.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
