@@ -180,8 +180,39 @@ pub struct EvidenceRecord {
     pub entity: String,
     pub claim: Claim,
     pub source: String,
-    /// Unix seconds.
+    /// Unix seconds (the canonical, serialized form). Deserialization also
+    /// accepts a readable date ("2026-06-25", "2026-06-25T14:30") and the
+    /// field name `at` — hand-written JSONL for `import` should not need a
+    /// unix-timestamp converter.
+    #[serde(alias = "at", deserialize_with = "de_observed_at")]
     pub observed_at: i64,
+}
+
+fn de_observed_at<'de, D>(d: D) -> std::result::Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct WhenVisitor;
+    impl serde::de::Visitor<'_> for WhenVisitor {
+        type Value = i64;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("unix seconds or a date string (YYYY-MM-DD[THH:MM[:SS]])")
+        }
+
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<i64, E> {
+            Ok(v)
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<i64, E> {
+            i64::try_from(v).map_err(|_| E::custom("timestamp out of range"))
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<i64, E> {
+            crate::time::parse_when(v).map_err(|e| E::custom(e.to_string()))
+        }
+    }
+    d.deserialize_any(WhenVisitor)
 }
 
 /// The resolved in-memory form (source looked up).

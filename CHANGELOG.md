@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **File-format reference** on the docs site: schema.json, all four coupling
+  kinds with their required slot order, sources.json, priors.json, evidence
+  JSONL, and resolve/decide actions — no more reading Rust source to learn a
+  format.
+- **Two new built-in templates** (`osint`, `sensor`) and a `nescio templates`
+  command: list built-ins, or `--show NAME` to print a complete schema +
+  sources pair as JSON to start your own from.
+- **Readable dates everywhere.** `import` JSONL accepts `observed_at` as unix
+  seconds *or* a date string ("2026-06-25", "2026-06-25T14:30"), plus `at` as
+  a field alias — hand-written evidence files no longer need a timestamp
+  converter. `init --sources` now also accepts the name-keyed map that
+  nescio itself writes, so a file copied from an existing database just works.
+
 ## [0.7.0] — 2026-07-03
 
 ### Added

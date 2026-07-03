@@ -313,6 +313,7 @@ noscript ~ * .tabpanel[hidden] { display: block; }
   <div class="group-label">reference</div>
   <a href="#http">HTTP API</a>
   <a href="#cli">CLI</a>
+  <a href="#formats">File formats</a>
   <a href="#clients">Client libraries</a>
   <a href="#storage">Storage &amp; ops</a>
 </nav>
@@ -394,7 +395,9 @@ noscript ~ * .tabpanel[hidden] { display: block; }
 
   <h3>1 · Create a database</h3>
   <p>The <code>real-estate</code> template ships four slots and five sources of very
-  different trustworthiness:</p>
+  different trustworthiness. (<code>nescio templates</code> lists all built-ins —
+  <code>osint</code> and <code>sensor</code> too — and <code>nescio templates --show
+  NAME</code> prints one as JSON to start your own schema from.)</p>
   <pre><code><span class="c">$</span> nescio init mydb --template real-estate
 <span class="c">initialized nescioDB in mydb
   slots:   condition, price, wants_to_sell, year_built
@@ -538,10 +541,11 @@ noscript ~ * .tabpanel[hidden] { display: block; }
   42%. The scraper's "renovated" pulls toward 1.3M while the broker's interval says
   900–1,000k; the posterior honestly holds the tension between them. Evidence that
   disagrees with what you believed makes you less certain. That is a feature.</p>
-  <p>Coupling kinds: <code>gaussian_by_category</code> (categorical&nbsp;→&nbsp;continuous
-  centers), <code>step_threshold</code> (continuous threshold reweights categories), and
-  <code>matrix</code> (categorical&nbsp;×&nbsp;categorical compatibility weights). They
-  are declared once in <code>schema.json</code> and apply to every entity.</p>
+  <p>There are four coupling kinds — <code>gaussian_by_category</code>,
+  <code>step_threshold</code>, <code>matrix</code> and <code>table</code> — each
+  expecting specific domain kinds on <code>slot_a</code> / <code>slot_b</code>. They are
+  declared once in <code>schema.json</code> and apply to every entity; the exact JSON
+  for each kind is in the <a href="#formats">file-format reference</a>.</p>
 </section>
 
 <!-- ============================================================== AXIOMS -->
@@ -953,7 +957,8 @@ villa_3</code></pre>
   <code>nescio &lt;command&gt; --help</code> shows every flag.</p>
   <div class="tablewrap"><table>
     <tr><th>command</th><th></th></tr>
-    <tr><td><code>init</code></td><td>create a database — <code>--template real-estate</code> or <code>--schema</code> + <code>--sources</code> JSON files</td></tr>
+    <tr><td><code>init</code></td><td>create a database — <code>--template NAME</code> or <code>--schema</code> + <code>--sources</code> JSON files (<a href="#formats">formats</a>)</td></tr>
+    <tr><td><code>templates</code></td><td>list built-in templates; <code>--show NAME</code> prints one as JSON</td></tr>
     <tr><td><code>status</code></td><td>slots, couplings, sources, entity and record counts</td></tr>
     <tr><td><code>source</code></td><td>register or update a source (<code>--reliability</code>, <code>--half-life-days</code>, <code>--axiomatic</code>)</td></tr>
     <tr><td><code>ingest</code></td><td>append one claim: <code>--interval LO..HI</code> | <code>--value V</code> | <code>--not-value V</code></td></tr>
@@ -968,9 +973,142 @@ villa_3</code></pre>
     <tr><td><code>schema add-slot / remove-slot / add-value / add-coupling / remove-coupling</code></td><td>evolve a live database — see <a href="#schema-evolution">schema evolution</a></td></tr>
     <tr><td><code>forget-source</code></td><td>GDPR erasure; all derived regions widen</td></tr>
     <tr><td><code>recalibrate</code></td><td>learn a source's r0 / half-life from ground truth (<code>--apply</code>)</td></tr>
-    <tr><td><code>import / export</code></td><td>JSONL in (one group commit) / JSONL out</td></tr>
+    <tr><td><code>import / export</code></td><td>JSONL in (one group commit) / JSONL out — dates or unix seconds, see <a href="#formats">formats</a></td></tr>
     <tr><td><code>serve</code></td><td>the HTTP API (<code>--port 7777</code>, <code>--bind 127.0.0.1</code>)</td></tr>
   </table></div>
+</section>
+
+<!-- ============================================================= FORMATS -->
+<section id="formats">
+  <h2><span class="group-label">reference</span>File formats</h2>
+  <p>Every JSON shape nescio reads or writes, in one place — nothing here requires
+  reading source code. The quickest living reference is
+  <code>nescio templates --show NAME</code>, which prints a complete, valid
+  schema + sources pair for any built-in template
+  (<code>real-estate</code>, <code>osint</code>, <code>sensor</code>).</p>
+
+  <h3>schema.json</h3>
+  <p>Slots (the state spaces) and couplings (cross-slot correlations). Passed to
+  <code>init --schema</code>; stored verbatim in the database directory.</p>
+  <pre><code>{
+  "slots": {
+    "price":     {"type": "continuous", "lo": 0.0, "hi": 2000000.0, "n_bins": 200},
+    "condition": {"type": "categorical", "values": ["renovated", "original", "derelict"]},
+    "for_sale":  {"type": "categorical", "values": ["true", "false"]}
+  },
+  "couplings": [
+    {"slot_a": "condition", "slot_b": "price", "name": "condition~price",
+     "compat": {"kind": "gaussian_by_category",
+                "centers": {"renovated": 1300000, "derelict": 500000},
+                "sigma": 300000}}
+  ]
+}</code></pre>
+  <ul>
+    <li><code>continuous</code>: <code>hi &gt; lo</code>, <code>n_bins ≥ 2</code>.
+    Resolution is <code>(hi − lo) / n_bins</code> — 200 bins over 2M means 10k steps.</li>
+    <li><code>categorical</code>: at least two distinct values. Booleans are the
+    two-value domain <code>["true", "false"]</code>.</li>
+    <li><code>couplings</code> is optional; <code>name</code> defaults to
+    <code>"slot_a~slot_b"</code> and must be unique (it is the handle for
+    <code>schema remove-coupling</code>).</li>
+  </ul>
+
+  <h3>Coupling kinds</h3>
+  <p><strong>Slot order matters</strong> — each kind expects specific domain kinds on
+  <code>slot_a</code> and <code>slot_b</code>:</p>
+  <div class="tablewrap"><table>
+    <tr><th>kind</th><th>slot_a</th><th>slot_b</th><th>fields</th><th>semantics</th></tr>
+    <tr>
+      <td><code>gaussian_by_category</code></td>
+      <td>categorical</td><td>continuous</td>
+      <td><code>centers: {value: center}</code>, <code>sigma</code></td>
+      <td>each category pulls slot_b toward its center, Gaussian-shaped; a category
+      <em>without</em> a center is uninformative</td>
+    </tr>
+    <tr>
+      <td><code>step_threshold</code></td>
+      <td>continuous</td><td>categorical</td>
+      <td><code>threshold</code>, <code>below: {value: w}</code>, <code>above: {value: w}</code></td>
+      <td>category weights switch at the threshold; missing entries are 1 (uninformative)</td>
+    </tr>
+    <tr>
+      <td><code>matrix</code></td>
+      <td>categorical</td><td>categorical</td>
+      <td><code>weights: {a: {b: w}}</code>, <code>default</code> (1)</td>
+      <td>pairwise compatibility; missing entries fall back to <code>default</code></td>
+    </tr>
+    <tr>
+      <td><code>table</code></td>
+      <td>any</td><td>any</td>
+      <td><code>rows</code> (n<sub>a</sub> × n<sub>b</sub>)</td>
+      <td>fully explicit factor table, rows over slot_a's cells — maximal control, but
+      fixed dimensions (it blocks <code>schema add-value</code> on its slots)</td>
+    </tr>
+  </table></div>
+  <p>All weights must be finite and ≥ 0. A weight of 0 is a hard constraint — combined
+  with an axiom it can produce a query-time conflict, exactly like contradicting axioms.</p>
+
+  <h3>sources.json</h3>
+  <p>What <code>init --sources</code> accepts — a JSON array, or the name-keyed map
+  nescio itself writes into the database directory. Both work, so a file copied from an
+  existing database is valid input.</p>
+  <pre><code>[
+  {"name": "land_registry", "reliability": 1.0, "axiomatic": true},
+  {"name": "broker",        "reliability": 0.85, "half_life_days": 90.0},
+  {"name": "web_scraper",   "reliability": 0.7,  "half_life_days": 45.0}
+]</code></pre>
+  <ul>
+    <li><code>reliability</code> ∈ (0, 1]. Non-axiomatic sources are capped just below
+    1.0 internally — only axioms may be absolute.</li>
+    <li><code>half_life_days</code> optional, &gt; 0; omitted means no decay.</li>
+    <li><code>axiomatic</code> optional, default false.</li>
+  </ul>
+
+  <h3>Evidence records (JSONL for import / export)</h3>
+  <p>One record per line. <code>observed_at</code> takes unix seconds <em>or</em> a
+  readable date — and <code>at</code> is accepted as an alias, so hand-written files
+  look like the CLI and the HTTP body. <code>export</code> always writes canonical
+  unix seconds.</p>
+  <pre><code>{"entity": "poi_7", "claim": {"type": "value", "slot": "role", "value": "courier"}, "source": "informant", "at": "2026-06-20"}
+{"entity": "poi_7", "claim": {"type": "interval", "slot": "age", "lo": 25, "hi": 35}, "source": "social_media", "observed_at": "2026-06-28T14:30"}
+{"entity": "poi_9", "claim": {"type": "not_value", "slot": "role", "value": "financier"}, "source": "news_wire", "observed_at": 1782345600}</code></pre>
+  <p>Claim types: <code>interval</code> (continuous; <code>lo ≤ hi</code>, must
+  intersect the domain), <code>value</code> and <code>not_value</code> (categorical;
+  the value must be in the domain). The source must be registered before import.</p>
+
+  <h3>Actions (resolve / decide)</h3>
+  <p>A JSON array describing what evidence <em>could</em> be bought. The
+  <code>source</code> is inline — it does not need to be registered, so you can plan
+  with hypothetical sources.</p>
+  <pre><code>[
+  {"name": "call the broker", "slot": "price", "cost": 5,
+   "source": {"name": "broker", "reliability": 0.85, "half_life_days": 90},
+   "answer_width": 100000}
+]</code></pre>
+  <div class="tablewrap"><table>
+    <tr><th>field</th><th></th></tr>
+    <tr><td><code>name</code></td><td>label used in the plan output</td></tr>
+    <tr><td><code>slot</code></td><td>which slot the answer lands on — need not be the target slot; couplings carry the gain across</td></tr>
+    <tr><td><code>cost</code></td><td>whatever unit you optimize (money, minutes, API calls)</td></tr>
+    <tr><td><code>source</code></td><td>an inline source object: reliability, half-life, axiomatic</td></tr>
+    <tr><td><code>answer_width</code></td><td>continuous slots only: the width of the interval the answer would arrive as</td></tr>
+  </table></div>
+  <p>Objectives for <code>decide</code> are documented <a href="#decide">at the verb</a>:
+  <code>{"kind": "entropy" | "squared_error" | "absolute_error"}</code> or
+  <code>{"kind": "decision", "loss": [[…]], "labels": […]}</code> with one loss row per
+  decision and one entry per cell of the target slot.</p>
+
+  <h3>priors.json</h3>
+  <p>Managed via <code>nescio prior register / use</code> — you rarely write it by
+  hand, but it is plain JSON:</p>
+  <pre><code>{
+  "registry":    {"district_9": {"slot": "price", "weights": [0.2, 0.4, "…one per cell…"]}},
+  "assignments": {"villa_2": {"price": "district_9"}},
+  "defaults":    {"price": [1.0, 1.0, "…applies to every unassigned entity…"]}
+}</code></pre>
+  <p>Weights are relative (they are normalized), must be finite and ≥ 0, not all zero,
+  and their length must equal the slot's cell count (<code>n_bins</code> or the number
+  of categorical values).</p>
 </section>
 
 <!-- ============================================================= CLIENTS -->

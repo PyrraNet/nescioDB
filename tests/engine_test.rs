@@ -1627,3 +1627,35 @@ fn remove_slot_erases_evidence_and_priors_physically() {
     assert!(!db.entities().any(|e| e == "only_area"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn evidence_records_accept_readable_dates_and_the_at_alias() {
+    // Hand-written JSONL for `import` may use dates, like --at on the CLI.
+    let rec: EvidenceRecord = serde_json::from_str(
+        r#"{"entity":"e","claim":{"type":"interval","slot":"price","lo":1,"hi":2},"source":"s","observed_at":"2026-07-03"}"#,
+    )
+    .unwrap();
+    assert_eq!(rec.observed_at, 20_637 * 86_400);
+
+    let rec: EvidenceRecord = serde_json::from_str(
+        r#"{"entity":"e","claim":{"type":"value","slot":"c","value":"x"},"source":"s","at":"2026-07-03T01:02:03"}"#,
+    )
+    .unwrap();
+    assert_eq!(rec.observed_at, 20_637 * 86_400 + 3723);
+
+    // Raw unix seconds keep working, and the canonical output stays numeric.
+    let rec: EvidenceRecord = serde_json::from_str(
+        r#"{"entity":"e","claim":{"type":"value","slot":"c","value":"x"},"source":"s","observed_at":1782345600}"#,
+    )
+    .unwrap();
+    assert_eq!(rec.observed_at, 1_782_345_600);
+    assert!(serde_json::to_string(&rec)
+        .unwrap()
+        .contains("\"observed_at\":1782345600"));
+
+    // Garbage dates fail loudly.
+    assert!(serde_json::from_str::<EvidenceRecord>(
+        r#"{"entity":"e","claim":{"type":"value","slot":"c","value":"x"},"source":"s","observed_at":"gestern"}"#,
+    )
+    .is_err());
+}

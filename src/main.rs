@@ -13,6 +13,8 @@ use clap::{Args, Parser, Subcommand};
 use nescio::prelude::*;
 use nescio::time::{format_unix, now_unix, parse_when};
 
+mod templates;
+
 #[derive(Parser)]
 #[command(
     name = "nescio",
@@ -35,9 +37,16 @@ enum Cmd {
         /// Sources JSON file ([{name, reliability, half_life_days?, axiomatic?}, ...])
         #[arg(long)]
         sources: Option<PathBuf>,
-        /// Start from a built-in template instead: "real-estate"
+        /// Start from a built-in template instead (see `nescio templates`)
         #[arg(long)]
         template: Option<String>,
+    },
+    /// List built-in templates, or print one as JSON (--show NAME)
+    Templates {
+        /// Print a template's schema and sources as JSON — a ready-made
+        /// reference for the schema.json / sources.json formats
+        #[arg(long)]
+        show: Option<String>,
     },
     /// Show slots, sources, entities and log size
     Status { dir: PathBuf },
@@ -239,8 +248,9 @@ enum Cmd {
         #[arg(long, default_value_t = 0.99)]
         min_truth_reliability: f64,
     },
-    /// Bulk-import evidence from a JSONL file (one record per line)
-    /// with a single group commit
+    /// Bulk-import evidence from a JSONL file (one record per line) with a
+    /// single group commit. "observed_at" (alias: "at") takes unix seconds
+    /// or a readable date, just like --at
     Import { dir: PathBuf, file: PathBuf },
     /// Export the binary log as human-readable JSONL (to a file, or stdout
     /// if omitted) — for debugging and diffing
@@ -379,23 +389,23 @@ fn run(cli: Cli) -> Result<()> {
             template,
         } => {
             let (schema, sources) = match (&schema, &sources, template.as_deref()) {
-                (None, None, Some("real-estate")) => real_estate_template(),
-                (None, None, Some(t)) => {
-                    return Err(Error::Invalid(format!(
-                        "unknown template {t:?} (available: real-estate)"
-                    )))
-                }
+                (None, None, Some(t)) => templates::get(t).ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "unknown template {t:?} (available: {})",
+                        templates::names()
+                    ))
+                })?,
                 (Some(s), src, None) => {
                     let schema: Schema = read_json_file(s)?;
-                    let sources: Vec<Source> = match src {
-                        Some(p) => read_json_file(p)?,
+                    let sources = match src {
+                        Some(p) => read_sources_file(p)?,
                         None => Vec::new(),
                     };
                     (schema, sources)
                 }
                 _ => {
                     return Err(Error::Invalid(
-                        "use either --schema [--sources], or --template real-estate".into(),
+                        "use either --schema [--sources], or --template NAME".into(),
                     ))
                 }
             };
@@ -414,6 +424,32 @@ fn run(cli: Cli) -> Result<()> {
                 "  sources: {}",
                 db.sources.keys().cloned().collect::<Vec<_>>().join(", ")
             );
+            Ok(())
+        }
+        Cmd::Templates { show } => {
+            match show {
+                Some(name) => {
+                    let (schema, sources) = templates::get(&name).ok_or_else(|| {
+                        Error::Invalid(format!(
+                            "unknown template {name:?} (available: {})",
+                            templates::names()
+                        ))
+                    })?;
+                    let combined = serde_json::json!({"schema": schema, "sources": sources});
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&combined).map_err(Error::Json)?
+                    );
+                }
+                None => {
+                    for t in templates::ALL {
+                        println!("{:<12} {}", t.name, t.blurb);
+                    }
+                    println!();
+                    println!("start:    nescio init mydb --template NAME");
+                    println!("inspect:  nescio templates --show NAME   (schema + sources as JSON)");
+                }
+            }
             Ok(())
         }
         Cmd::Status { dir } => {
@@ -1054,90 +1090,16 @@ fn fmt_region(r: &Region) -> String {
     }
 }
 
-/// Built-in demo schema: real-estate objects with coupled slots.
-fn real_estate_template() -> (Schema, Vec<Source>) {
-    let mut slots = BTreeMap::new();
-    slots.insert(
-        "price".to_string(),
-        Domain::Continuous {
-            lo: 0.0,
-            hi: 2_000_000.0,
-            n_bins: 200,
-        },
-    );
-    slots.insert(
-        "condition".to_string(),
-        Domain::Categorical {
-            values: vec!["renovated".into(), "original".into(), "derelict".into()],
-        },
-    );
-    slots.insert("wants_to_sell".to_string(), Domain::boolean());
-    slots.insert(
-        "year_built".to_string(),
-        Domain::Continuous {
-            lo: 1900.0,
-            hi: 2026.0,
-            n_bins: 126,
-        },
-    );
-    let couplings = vec![
-        Coupling {
-            slot_a: "condition".into(),
-            slot_b: "price".into(),
-            compat: Compat::GaussianByCategory {
-                centers: [
-                    ("renovated".to_string(), 1_300_000.0),
-                    ("original".to_string(), 900_000.0),
-                    ("derelict".to_string(), 500_000.0),
-                ]
-                .into_iter()
-                .collect(),
-                sigma: 300_000.0,
-            },
-            name: Some("condition~price".into()),
-        },
-        Coupling {
-            slot_a: "year_built".into(),
-            slot_b: "condition".into(),
-            compat: Compat::StepThreshold {
-                threshold: 1980.0,
-                below: [("renovated".to_string(), 0.5)].into_iter().collect(),
-                above: [("derelict".to_string(), 0.2)].into_iter().collect(),
-            },
-            name: Some("year_built~condition".into()),
-        },
-    ];
-    let sources = vec![
-        Source {
-            name: "land_registry".into(),
-            reliability: 1.0,
-            half_life_days: None,
-            axiomatic: true,
-        },
-        Source {
-            name: "notary".into(),
-            reliability: 1.0,
-            half_life_days: None,
-            axiomatic: true,
-        },
-        Source {
-            name: "broker".into(),
-            reliability: 0.85,
-            half_life_days: Some(90.0),
-            axiomatic: false,
-        },
-        Source {
-            name: "web_scraper".into(),
-            reliability: 0.7,
-            half_life_days: Some(45.0),
-            axiomatic: false,
-        },
-        Source {
-            name: "neighbor".into(),
-            reliability: 0.4,
-            half_life_days: Some(30.0),
-            axiomatic: false,
-        },
-    ];
-    (Schema { slots, couplings }, sources)
+/// Read a sources file: a JSON array of sources, or — because that is what
+/// nescio itself writes to sources.json — a name-keyed map. Both work, so a
+/// file copied out of an existing database is a valid input.
+fn read_sources_file(path: &PathBuf) -> Result<Vec<Source>> {
+    let data = std::fs::read_to_string(path)
+        .map_err(|e| Error::Invalid(format!("cannot read {}: {e}", path.display())))?;
+    if let Ok(list) = serde_json::from_str::<Vec<Source>>(&data) {
+        return Ok(list);
+    }
+    serde_json::from_str::<BTreeMap<String, Source>>(&data)
+        .map(|m| m.into_values().collect())
+        .map_err(|e| Error::Invalid(format!("{}: {e}", path.display())))
 }

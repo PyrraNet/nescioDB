@@ -16,6 +16,7 @@
   <a href="https://pyrranet.github.io/nescioDB/"><b>Documentation</b></a> ·
   <a href="https://pyrranet.github.io/nescioDB/#tour">Five-minute tour</a> ·
   <a href="https://pyrranet.github.io/nescioDB/#http">HTTP API</a> ·
+  <a href="https://pyrranet.github.io/nescioDB/#formats">File formats</a> ·
   <a href="https://docs.rs/nescio">Rust API</a>
 </p>
 
