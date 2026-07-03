@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.1] — 2026-07-03
 
 ### Added
 - **File-format reference** on the docs site: schema.json, all four coupling
@@ -63,6 +63,7 @@ Initial public release.
 - Zero-dependency typed clients for TypeScript and Java.
 - Examples: `realestate` (end-to-end walkthrough) and `bench`.
 
+[0.7.1]: https://github.com/PyrraNet/nescioDB/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/PyrraNet/nescioDB/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PyrraNet/nescioDB/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PyrraNet/nescioDB/releases/tag/v0.5.0
