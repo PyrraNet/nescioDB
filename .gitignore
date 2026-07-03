@@ -7,3 +7,4 @@ clients/typescript/dist
 clients/typescript/package-lock.json
 clients/java/out
 clients/java/target
+.DS_Store
