@@ -26,7 +26,7 @@
 //! ## Quick start
 //!
 //! ```
-//! use nesciodb::prelude::*;
+//! use nescio::prelude::*;
 //! use std::collections::BTreeMap;
 //!
 //! let mut slots = BTreeMap::new();

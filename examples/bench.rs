@@ -11,9 +11,9 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use nesciodb::prelude::*;
-use nesciodb::rng::Rng;
-use nesciodb::time::SECONDS_PER_DAY;
+use nescio::prelude::*;
+use nescio::rng::Rng;
+use nescio::time::SECONDS_PER_DAY;
 
 const DAY: i64 = SECONDS_PER_DAY as i64;
 

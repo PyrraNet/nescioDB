@@ -77,8 +77,8 @@ Typed clients for [TypeScript](clients/typescript/) and [Java](clients/java/) wr
 ## As a library
 
 ```rust
-use nesciodb::prelude::*;
-use nesciodb::time::now_unix;
+use nescio::prelude::*;
+use nescio::time::now_unix;
 use std::path::Path;
 
 let db = Db::open(Path::new("mydb"))?;

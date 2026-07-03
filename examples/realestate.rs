@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use nesciodb::prelude::*;
+use nescio::prelude::*;
 
 const DAY: i64 = 86_400;
 

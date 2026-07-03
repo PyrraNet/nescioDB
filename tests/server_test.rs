@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
-use nesciodb::prelude::*;
-use nesciodb::server::NescioServer;
+use nescio::prelude::*;
+use nescio::server::NescioServer;
 
 fn test_db() -> Db {
     let mut slots = BTreeMap::new();

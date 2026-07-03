@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
-use nesciodb::prelude::*;
-use nesciodb::rng::Rng;
+use nescio::prelude::*;
+use nescio::rng::Rng;
 
 const DAY: i64 = 86_400;
 
@@ -944,7 +944,7 @@ fn binary_log_roundtrips_and_export_matches() {
 
     // The on-disk file starts with the binary magic, not JSON.
     let bytes = std::fs::read(dir.join("log.bin")).unwrap();
-    assert_eq!(&bytes[..8], nesciodb::binlog::MAGIC);
+    assert_eq!(&bytes[..8], nescio::binlog::MAGIC);
 
     // export reconstructs valid JSONL that itself re-parses to the same set.
     let jsonl = db.export_jsonl().unwrap();
@@ -1068,7 +1068,7 @@ fn ingest_batch_is_atomic_and_durable() {
     // The log holds only its magic header — nothing from the rejected batch.
     assert_eq!(
         std::fs::read(dir.join("log.bin")).unwrap(),
-        nesciodb::binlog::header()
+        nescio::binlog::header()
     );
 
     // A valid batch lands completely and survives reopen.

@@ -1,6 +1,6 @@
 [package]
-name = "nesciodb"
-version = "0.5.0"
+name = "nescio"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.75"
 description = "nescioDB (Aporia): a database whose primary object is ignorance — evidence with decay, regions with entropy, and queries that plan their own data procurement."
@@ -8,9 +8,11 @@ license = "MIT"
 repository = "https://github.com/PyrraNet/nescioDB"
 keywords = ["database", "uncertainty", "probabilistic", "evidence", "entropy"]
 categories = ["database-implementations"]
+# The language clients live in the repo for humans, not in the crate tarball.
+exclude = ["clients"]
 
 [lib]
-name = "nesciodb"
+name = "nescio"
 path = "src/lib.rs"
 
 [[bin]]

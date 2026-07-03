@@ -10,8 +10,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 
-use nesciodb::prelude::*;
-use nesciodb::time::{format_unix, now_unix, parse_when};
+use nescio::prelude::*;
+use nescio::time::{format_unix, now_unix, parse_when};
 
 #[derive(Parser)]
 #[command(
@@ -820,7 +820,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Serve { dir, port, bind } => {
             let db = Db::open(&dir)?;
-            let server = nesciodb::server::NescioServer::bind(&format!("{bind}:{port}"))?;
+            let server = nescio::server::NescioServer::bind(&format!("{bind}:{port}"))?;
             println!(
                 "nescioDB serving {} on http://{bind}:{} (parallel reads, exclusive writes)",
                 dir.display(),
