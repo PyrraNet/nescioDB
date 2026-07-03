@@ -1114,16 +1114,42 @@ villa_3</code></pre>
 <!-- ============================================================= CLIENTS -->
 <section id="clients">
   <h2><span class="group-label">reference</span>Client libraries</h2>
-  <p>Typed clients wrap every server verb. Both are zero-dependency by design — the
-  TypeScript client uses the global <code>fetch</code>, the Java client uses the JDK's
-  <code>java.net.http</code> plus a small bundled JSON codec.</p>
+  <p>Typed clients for Python, TypeScript and Java. All three are zero-dependency by
+  design and <strong>single-file vendorable</strong>: if you'd rather not add a package,
+  copy the one source file into your project and you are done.</p>
   <div class="tabs">
     <div class="tabbar" role="tablist">
-      <button role="tab" aria-selected="true">TypeScript</button>
+      <button role="tab" aria-selected="true">Python</button>
+      <button role="tab" aria-selected="false">TypeScript</button>
       <button role="tab" aria-selected="false">Java</button>
     </div>
     <div class="tabpanel" role="tabpanel">
-<pre><code><span class="c">// npm install nesciodb   (Node 18+ or any modern browser)</span>
+<pre><code><span class="c"># pip install nesciodb   (Python 3.9+, urllib only — or vendor the one file)</span>
+from datetime import date
+from nesciodb import NescioClient, claim, source, action, objective
+
+db = NescioClient("http://localhost:7777")
+
+db.ingest("villa_1", claim.interval("price", 900_000, 1_000_000),
+          "broker", at="2026-06-25")
+
+b = db.bound("villa_1", "price", at=date(2026, 7, 3))
+print(f"{b.entropy_bits:.2f} bits, knowledge {b.knowledge_ratio:.0%}")
+print(b.region)                          <span class="c"># [(570000.0, 1210000.0)]</span>
+
+<span class="c"># Entity handles for entity-centric code:</span>
+villa = db.entity("villa_1")
+villa.certainly("price", lt=1_500_000)   <span class="c"># "true" | "possible" | "false"</span>
+
+<span class="c"># Value of Information: which evidence most improves the decision?</span>
+plan = villa.decide("price", objective=objective.absolute_error(), target=10_000,
+    actions=[action("pull the land registry", "price", cost=40,
+                    src=source("land_registry", 1.0, axiomatic=True),
+                    answer_width=20_000)])
+print(plan.recommended_now, "->", plan.validated_risk)</code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">// npm install nesciodb   (Node 18+ or any modern browser — or vendor the one file)</span>
 import { NescioClient, claim } from "nesciodb";
 
 const db = new NescioClient("http://localhost:7777");
@@ -1132,13 +1158,25 @@ await db.ingest("villa_1", claim.interval("price", 900_000, 1_000_000), "broker"
   at: "2026-06-25",
 });
 
-const b = await db.bound("villa_1", "price", { at: "2026-07-03" });
+const b = await db.bound("villa_1", "price", { at: new Date("2026-07-03") });
 console.log(b.entropyBits, b.knowledgeRatio, b.region);
 
-const { matches } = await db.join(
-  { op: "approx", left: "price", right: "price", tol: 50_000 },
-  { minProbability: 0.5 },
-);</code></pre>
+<span class="c">// Entity handles for entity-centric code:</span>
+const villa = db.entity("villa_1");
+await villa.certainly("price", { op: "lt", value: 1_500_000 });
+
+<span class="c">// Value of Information: which evidence most improves the decision?</span>
+const plan = await villa.decide({
+  slot: "price",
+  objective: { kind: "absolute_error" },
+  target: 10_000,
+  actions: [{
+    name: "pull the land registry", slot: "price", cost: 40,
+    source: { name: "land_registry", reliability: 1.0, axiomatic: true },
+    answerWidth: 20_000,
+  }],
+});
+console.log(plan.recommendedNow, "->", plan.validatedRisk);</code></pre>
     </div>
     <div class="tabpanel" role="tabpanel" hidden>
 <pre><code><span class="c">// JDK 17+; drop the three files into your project, or mvn package</span>
@@ -1155,11 +1193,32 @@ System.out.printf("%.2f bits, knowledge %.0f%%%n",
     b.entropyBits(), b.knowledgeRatio() * 100);</code></pre>
     </div>
   </div>
-  <p>Details and full method lists:
-  <a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/typescript">TypeScript client</a> ·
-  <a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/java">Java client</a>.
-  Non-2xx responses throw (<code>NescioError</code> / <code>NescioException</code>) with
-  the status and the server's message.</p>
+  <p>What each client covers:</p>
+  <div class="tablewrap"><table>
+    <tr><th>client</th><th>verbs</th><th>times (<code>at</code>)</th><th>errors</th></tr>
+    <tr>
+      <td><a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/python">Python</a></td>
+      <td>all — incl. <code>decide</code>, schema evolution, batch ingest, priors, recalibrate</td>
+      <td>ISO string, unix seconds, <code>date</code>, <code>datetime</code></td>
+      <td><code>NescioError</code> with <code>.status</code></td>
+    </tr>
+    <tr>
+      <td><a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/typescript">TypeScript</a></td>
+      <td>all — incl. <code>decide</code>, schema evolution, batch ingest, priors, recalibrate</td>
+      <td>ISO string, unix seconds, <code>Date</code></td>
+      <td><code>NescioError</code> with <code>.status</code></td>
+    </tr>
+    <tr>
+      <td><a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/java">Java</a></td>
+      <td><code>bound</code> … <code>resolve</code>, ingest, sources, priors, recalibrate</td>
+      <td><code>At.date(…)</code>, <code>At.unix(…)</code></td>
+      <td><code>NescioException</code> with <code>.status()</code></td>
+    </tr>
+  </table></div>
+  <p>Python and TypeScript also ship builders for every wire format —
+  <code>claim.*</code>, <code>domain.*</code>, <code>coupling.*</code>,
+  <code>objective.*</code> — so the <a href="#formats">file-format rules</a> (slot
+  order, field names) are encoded in the type system instead of your memory.</p>
 </section>
 
 <!-- ============================================================= STORAGE -->

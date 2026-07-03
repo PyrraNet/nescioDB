@@ -9,8 +9,13 @@
  * Zero runtime dependencies — uses the global `fetch` (Node 18+ / browsers).
  */
 
-/** A point in time: an ISO date/datetime, or unix seconds. Defaults to now. */
-export type At = string | number;
+/** A point in time: an ISO date/datetime, unix seconds, or a Date. Defaults to now. */
+export type At = string | number | Date;
+
+function atOut(at?: At): string | number | undefined {
+  if (at === undefined) return undefined;
+  return at instanceof Date ? Math.floor(at.getTime() / 1000) : at;
+}
 
 export type Tri = "true" | "possible" | "false";
 
@@ -83,6 +88,121 @@ export interface ResolvePlan {
   totalCost: number;
 }
 
+/** The decision problem a DECIDE plan optimizes for. */
+export type Objective =
+  | { kind: "entropy" }
+  | { kind: "squared_error" }
+  | { kind: "absolute_error" }
+  | { kind: "decision"; loss: number[][]; labels?: string[] };
+
+export interface DecisionStep {
+  action: ProcurementAction;
+  expectedRisk: number;
+  expectedGain: number;
+}
+
+/** Result of DECIDE: risk is in the objective's own units, not bits. */
+export interface DecisionPlan {
+  objective: string;
+  units: string;
+  steps: DecisionStep[];
+  startRisk: number;
+  plannedRisk: number;
+  /** Seeded Monte-Carlo estimate over full worlds — the number to trust. */
+  validatedRisk: number | null;
+  totalCost: number;
+  /** What the DB would decide right now. */
+  recommendedNow: string;
+  /** What it would decide after executing the plan. */
+  recommendedAfter: string;
+}
+
+/** A slot's state space, as in schema.json. Build one with the `domain` helpers. */
+export type Domain =
+  | { type: "continuous"; lo: number; hi: number; n_bins: number }
+  | { type: "categorical"; values: string[] };
+
+/** Domain helpers. */
+export const domain = {
+  continuous: (lo: number, hi: number, nBins: number): Domain => ({
+    type: "continuous",
+    lo,
+    hi,
+    n_bins: nBins,
+  }),
+  categorical: (...values: string[]): Domain => ({ type: "categorical", values }),
+  boolean: (): Domain => ({ type: "categorical", values: ["true", "false"] }),
+};
+
+/** Cross-slot correlation, as in schema.json. Build one with the `coupling` helpers. */
+export interface Coupling {
+  slot_a: string;
+  slot_b: string;
+  compat: Compat;
+  name?: string;
+}
+
+export type Compat =
+  | { kind: "gaussian_by_category"; centers: Record<string, number>; sigma: number }
+  | {
+      kind: "step_threshold";
+      threshold: number;
+      below: Record<string, number>;
+      above: Record<string, number>;
+    }
+  | { kind: "matrix"; weights: Record<string, Record<string, number>>; default?: number }
+  | { kind: "table"; rows: number[][] };
+
+/**
+ * Coupling helpers. Slot order matters — see the file-format reference:
+ * gaussianByCategory wants (categorical, continuous), stepThreshold
+ * (continuous, categorical), matrix (categorical, categorical).
+ */
+export const coupling = {
+  gaussianByCategory: (
+    slotA: string,
+    slotB: string,
+    centers: Record<string, number>,
+    sigma: number,
+    name?: string,
+  ): Coupling => ({
+    slot_a: slotA,
+    slot_b: slotB,
+    compat: { kind: "gaussian_by_category", centers, sigma },
+    name,
+  }),
+  stepThreshold: (
+    slotA: string,
+    slotB: string,
+    threshold: number,
+    below: Record<string, number>,
+    above: Record<string, number>,
+    name?: string,
+  ): Coupling => ({
+    slot_a: slotA,
+    slot_b: slotB,
+    compat: { kind: "step_threshold", threshold, below, above },
+    name,
+  }),
+  matrix: (
+    slotA: string,
+    slotB: string,
+    weights: Record<string, Record<string, number>>,
+    opts: { default?: number; name?: string } = {},
+  ): Coupling => ({
+    slot_a: slotA,
+    slot_b: slotB,
+    compat: { kind: "matrix", weights, default: opts.default },
+    name: opts.name,
+  }),
+  table: (slotA: string, slotB: string, rows: number[][], name?: string): Coupling => ({
+    slot_a: slotA,
+    slot_b: slotB,
+    compat: { kind: "table", rows },
+    name,
+  }),
+};
+
 export type JoinPredicate =
   | { op: "gt"; left: string; right: string }
   | { op: "lt"; left: string; right: string }
@@ -144,21 +264,30 @@ export interface ClientOptions {
   timeoutMs?: number;
   /** Custom fetch implementation (defaults to the global `fetch`). */
   fetch?: typeof fetch;
+  /** Extra headers sent with every request (e.g. auth for a reverse proxy). */
+  headers?: Record<string, string>;
 }
 
 export class NescioClient {
   private readonly base: string;
   private readonly timeoutMs: number;
   private readonly doFetch: typeof fetch;
+  private readonly headers: Record<string, string>;
 
   constructor(baseUrl = "http://localhost:7777", opts: ClientOptions = {}) {
     this.base = baseUrl.replace(/\/$/, "");
     this.timeoutMs = opts.timeoutMs ?? 30_000;
+    this.headers = opts.headers ?? {};
     const f = opts.fetch ?? globalThis.fetch;
     if (!f) {
       throw new Error("no fetch available — pass one via ClientOptions.fetch (Node < 18)");
     }
     this.doFetch = f.bind(globalThis);
+  }
+
+  /** A handle with the entity id bound: `db.entity("villa_1").bound("price")`. */
+  entity(id: string): EntityHandle {
+    return new EntityHandle(this, id);
   }
 
   // ------------------------------------------------------------- introspection
@@ -182,7 +311,7 @@ export class NescioClient {
     const j = await this.get("/bound", {
       entity,
       slot,
-      at: opts.at,
+      at: atOut(opts.at),
       credible: opts.credible,
     });
     return mapBound(j);
@@ -193,7 +322,7 @@ export class NescioClient {
     entity: string,
     opts: { seed?: number; at?: At } = {},
   ): Promise<Record<string, number | string>> {
-    return this.get("/sample", { entity, seed: opts.seed, at: opts.at });
+    return this.get("/sample", { entity, seed: opts.seed, at: atOut(opts.at) });
   }
 
   /** Three-valued predicate: `true` / `possible` / `false` (region containment). */
@@ -203,7 +332,7 @@ export class NescioClient {
     pred: Predicate,
     opts: { at?: At } = {},
   ): Promise<Tri> {
-    const params: Record<string, unknown> = { entity, slot, op: pred.op, at: opts.at };
+    const params: Record<string, unknown> = { entity, slot, op: pred.op, at: atOut(opts.at) };
     if ("value" in pred) params.value = pred.value;
     if ("lo" in pred) params.lo = pred.lo;
     if ("hi" in pred) params.hi = pred.hi;
@@ -218,7 +347,7 @@ export class NescioClient {
     hi: number,
     opts: { mode?: FindMode; at?: At } = {},
   ): Promise<string[]> {
-    return this.get("/find", { slot, lo, hi, mode: opts.mode, at: opts.at });
+    return this.get("/find", { slot, lo, hi, mode: opts.mode, at: atOut(opts.at) });
   }
 
   /** JOIN: entity pairs matching a relation, each with a probability and certainty. */
@@ -236,7 +365,7 @@ export class NescioClient {
         require_evidence: opts.requireEvidence,
         limit: opts.limit,
       },
-      at: opts.at,
+      at: atOut(opts.at),
     });
     return {
       matches: j.matches,
@@ -264,9 +393,39 @@ export class NescioClient {
       max_steps: req.maxSteps,
       mc: req.mc,
       seed: req.seed,
-      at: req.at,
+      at: atOut(req.at),
     });
     return mapPlan(j);
+  }
+
+  /**
+   * DECIDE: plan the evidence that most improves a *decision*, not just
+   * entropy — the Value of Information for the call you actually face.
+   */
+  async decide(req: {
+    entity: string;
+    slot: string;
+    objective: Objective;
+    /** Stop once the Bayes risk (in the objective's units) reaches this. */
+    target: number;
+    actions: ProcurementAction[];
+    maxSteps?: number;
+    mc?: number;
+    seed?: number;
+    at?: At;
+  }): Promise<DecisionPlan> {
+    const j = await this.post("/decide", {
+      entity: req.entity,
+      slot: req.slot,
+      objective: req.objective,
+      target: req.target,
+      actions: req.actions.map(actionOut),
+      max_steps: req.maxSteps,
+      mc: req.mc,
+      seed: req.seed,
+      at: atOut(req.at),
+    });
+    return mapDecision(j);
   }
 
   // ------------------------------------------------------------------- writes
@@ -278,7 +437,7 @@ export class NescioClient {
     source: string,
     opts: { at?: At } = {},
   ): Promise<{ ok: boolean; observedAt: number }> {
-    const j = await this.post("/ingest", { entity, claim: c, source, at: opts.at });
+    const j = await this.post("/ingest", { entity, claim: c, source, at: atOut(opts.at) });
     return { ok: j.ok, observedAt: j.observed_at };
   }
 
@@ -286,7 +445,10 @@ export class NescioClient {
   async ingestBatch(
     records: { entity: string; claim: Claim; source: string; at?: At }[],
   ): Promise<{ ok: boolean; ingested: number }> {
-    return this.post("/ingest-batch", records);
+    return this.post(
+      "/ingest-batch",
+      records.map((r) => ({ ...r, at: atOut(r.at) })),
+    );
   }
 
   /** Register or update a source (updating re-interprets its whole history). */
@@ -321,6 +483,40 @@ export class NescioClient {
     return this.post("/priors/use", { entity, slot, name });
   }
 
+  // ---------------------------------------------------------- schema evolution
+
+  /** Add a slot to the live database; every entity starts at maximal entropy on it. */
+  async addSlot(name: string, d: Domain): Promise<{ ok: boolean }> {
+    return this.post("/schema/add-slot", { name, domain: d });
+  }
+
+  /**
+   * Remove a slot: physically erases its evidence and priors. Refused (400)
+   * while a coupling references the slot — remove the coupling first.
+   */
+  async removeSlot(
+    name: string,
+  ): Promise<{ ok: boolean; evidenceErased: number; priorsRemoved: number }> {
+    const j = await this.post("/schema/remove-slot", { name });
+    return { ok: j.ok, evidenceErased: j.evidence_erased, priorsRemoved: j.priors_removed };
+  }
+
+  /** Extend a categorical slot with a new value; history stays valid. */
+  async addValue(slot: string, value: string): Promise<{ ok: boolean; priorsExtended: number }> {
+    const j = await this.post("/schema/add-value", { slot, value });
+    return { ok: j.ok, priorsExtended: j.priors_extended };
+  }
+
+  /** Add a coupling — it applies to every entity immediately. */
+  async addCoupling(c: Coupling): Promise<{ ok: boolean }> {
+    return this.post("/schema/add-coupling", c);
+  }
+
+  /** Remove a coupling by its label (defaults to "slot_a~slot_b"). */
+  async removeCoupling(name: string): Promise<{ ok: boolean }> {
+    return this.post("/schema/remove-coupling", { name });
+  }
+
   // ----------------------------------------------------------------- plumbing
 
   private async get(path: string, params: Record<string, unknown> = {}): Promise<any> {
@@ -344,7 +540,7 @@ export class NescioClient {
       res = await this.doFetch(this.base + path, {
         method,
         body,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
+        headers: body ? { "Content-Type": "application/json", ...this.headers } : this.headers,
         signal: ctrl.signal,
       });
     } catch (e) {
@@ -358,6 +554,58 @@ export class NescioClient {
       throw new NescioError(res.status, parsed?.error ?? `HTTP ${res.status}`);
     }
     return parsed;
+  }
+}
+
+/** An entity id bound to a client — sugar for entity-centric app code. */
+export class EntityHandle {
+  private readonly db: NescioClient;
+  readonly id: string;
+
+  constructor(db: NescioClient, id: string) {
+    this.db = db;
+    this.id = id;
+  }
+
+  bound(slot: string, opts?: { at?: At; credible?: number }): Promise<Bound> {
+    return this.db.bound(this.id, slot, opts);
+  }
+
+  sample(opts?: { seed?: number; at?: At }): Promise<Record<string, number | string>> {
+    return this.db.sample(this.id, opts);
+  }
+
+  certainly(slot: string, pred: Predicate, opts?: { at?: At }): Promise<Tri> {
+    return this.db.certainly(this.id, slot, pred, opts);
+  }
+
+  ingest(c: Claim, source: string, opts?: { at?: At }): Promise<{ ok: boolean; observedAt: number }> {
+    return this.db.ingest(this.id, c, source, opts);
+  }
+
+  resolve(req: {
+    slot: string;
+    targetBits: number;
+    actions: ProcurementAction[];
+    maxSteps?: number;
+    mc?: number;
+    seed?: number;
+    at?: At;
+  }): Promise<ResolvePlan> {
+    return this.db.resolve({ ...req, entity: this.id });
+  }
+
+  decide(req: {
+    slot: string;
+    objective: Objective;
+    target: number;
+    actions: ProcurementAction[];
+    maxSteps?: number;
+    mc?: number;
+    seed?: number;
+    at?: At;
+  }): Promise<DecisionPlan> {
+    return this.db.decide({ ...req, entity: this.id });
   }
 }
 
@@ -393,6 +641,24 @@ function mapPlan(j: any): ResolvePlan {
     plannedEntropyBits: j.planned_entropy_bits,
     validatedEntropyBits: j.validated_entropy_bits ?? null,
     totalCost: j.total_cost,
+  };
+}
+
+function mapDecision(j: any): DecisionPlan {
+  return {
+    objective: j.objective,
+    units: j.units,
+    steps: (j.steps as any[]).map((s) => ({
+      action: mapAction(s.action),
+      expectedRisk: s.expected_risk,
+      expectedGain: s.expected_gain,
+    })),
+    startRisk: j.start_risk,
+    plannedRisk: j.planned_risk,
+    validatedRisk: j.validated_risk ?? null,
+    totalCost: j.total_cost,
+    recommendedNow: j.recommended_now,
+    recommendedAfter: j.recommended_after,
   };
 }
 

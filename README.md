@@ -89,7 +89,7 @@ curl 'localhost:7777/bound?entity=villa_1&slot=price&at=2026-07-03'
 
 All verbs over HTTP/JSON, usable from any language. One process owns the database; reads run in parallel, writes are exclusive.
 
-Typed clients for [TypeScript](clients/typescript/) and [Java](clients/java/) wrap every verb — both zero-dependency.
+Typed clients for [Python](clients/python/), [TypeScript](clients/typescript/) and [Java](clients/java/) wrap the verbs — all zero-dependency and single-file vendorable.
 
 ## As a Rust library
 

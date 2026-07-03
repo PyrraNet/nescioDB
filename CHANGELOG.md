@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Python client** (`clients/python`, package `nesciodb`): zero-dependency
+  (urllib, 3.9+), fully typed, covers every verb including `decide` and
+  schema evolution. Dataclass results, `datetime`-aware `at=`, entity
+  handles (`db.entity("v1").bound("price")`), and builders for every wire
+  format (`claim`, `domain`, `coupling`, `objective`, `source`, `action`).
+- **TypeScript client 0.7.1**: full server parity — `decide` (Value of
+  Information), all `/schema/*` methods with `domain`/`coupling` builders,
+  entity handles, `Date` support for `at`, extra headers option.
+- Docs: client section rewritten — Python/TypeScript/Java tabs with
+  end-to-end examples and a capability table.
+
 ## [0.7.1] — 2026-07-03
 
 ### Added
