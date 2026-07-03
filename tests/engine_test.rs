@@ -375,6 +375,164 @@ fn resolve_admits_when_nothing_helps() {
 
 // ------------------------------------------------------------ coupled slots
 
+// ------------------------------------------------- decision-theoretic RESOLVE
+
+#[test]
+fn squared_error_resolve_reduces_variance_and_recommends_an_estimate() {
+    // With a point-estimate decision, "risk" is the posterior variance and
+    // the recommendation is the estimate itself — not a distribution.
+    let mut db = make_db(vec![source("scrape", 0.7, Some(30.0))]);
+    ingest(
+        &mut db,
+        "obj1",
+        interval("price", 200_000.0, 800_000.0),
+        "scrape",
+        0.0,
+    );
+    let q = Query::new(&db, day(1.0));
+    let survey = act(
+        "survey",
+        "price",
+        100.0,
+        source("surveyor", 0.95, Some(60.0)),
+        Some(40_000.0),
+    );
+    let plan = q
+        .resolve_decision(
+            "obj1",
+            "price",
+            &Objective::SquaredError,
+            5e9,
+            &[survey],
+            10,
+            8,
+            0,
+        )
+        .unwrap();
+    assert_eq!(plan.units, "variance");
+    assert!(plan.start_risk > 0.0);
+    assert!(!plan.steps.is_empty());
+    assert!(plan.planned_risk < plan.start_risk);
+    assert!(plan.recommended_now.starts_with("estimate"));
+}
+
+#[test]
+fn decision_resolve_stops_when_the_decision_is_already_clear() {
+    // A "buy vs. pass" call at a 500k budget. The assessor already places the
+    // price well above budget, so the decision (pass) is settled — even
+    // though plenty of entropy remains. Entropy-RESOLVE still spends to
+    // narrow the region; decision-RESOLVE spends nothing, because no evidence
+    // on offer would change the call. That gap is the Value of Information.
+    let mut db = make_db(vec![source("assessor", 0.9, Some(180.0))]);
+    ingest(
+        &mut db,
+        "deal",
+        interval("price", 650_000.0, 750_000.0),
+        "assessor",
+        0.0,
+    );
+    let q = Query::new(&db, day(1.0));
+    let survey = act(
+        "survey",
+        "price",
+        100.0,
+        source("surveyor", 0.9, Some(180.0)),
+        Some(50_000.0),
+    );
+
+    // Entropy still has an appetite for this evidence.
+    let entropy_plan = q
+        .resolve(
+            "deal",
+            "price",
+            2.0,
+            std::slice::from_ref(&survey),
+            10,
+            8,
+            0,
+        )
+        .unwrap();
+    assert!(!entropy_plan.steps.is_empty());
+
+    // The decision does not.
+    let n = 200;
+    let budget = 500_000.0;
+    let price = |i: usize| (i as f64 + 0.5) * (1_000_000.0 / n as f64);
+    let scale = 1e-6;
+    let buy: Vec<f64> = (0..n)
+        .map(|i| (price(i) - budget).max(0.0) * scale)
+        .collect();
+    let pass: Vec<f64> = (0..n)
+        .map(|i| (budget - price(i)).max(0.0) * scale)
+        .collect();
+    let objective = Objective::Decision {
+        loss: vec![buy, pass],
+        labels: Some(vec!["buy".into(), "pass".into()]),
+    };
+    let plan = q
+        .resolve_decision(
+            "deal",
+            "price",
+            &objective,
+            0.03,
+            std::slice::from_ref(&survey),
+            10,
+            8,
+            0,
+        )
+        .unwrap();
+    assert_eq!(plan.units, "loss");
+    assert_eq!(plan.recommended_now, "pass"); // above budget → don't buy
+    assert!(plan.start_risk < 0.03);
+    assert!(
+        plan.steps.is_empty(),
+        "the decision is settled; no evidence is worth buying"
+    );
+}
+
+#[test]
+fn decision_objective_rejects_ill_formed_inputs() {
+    let mut db = make_db(vec![source("s", 0.8, Some(90.0))]);
+    ingest(
+        &mut db,
+        "e",
+        interval("price", 100_000.0, 200_000.0),
+        "s",
+        0.0,
+    );
+    let q = Query::new(&db, day(1.0));
+    let a = act(
+        "survey",
+        "price",
+        100.0,
+        source("surv", 0.9, Some(60.0)),
+        Some(40_000.0),
+    );
+
+    // A point-estimate objective on a categorical slot makes no sense.
+    assert!(q
+        .resolve_decision(
+            "e",
+            "wants_to_sell",
+            &Objective::SquaredError,
+            0.1,
+            std::slice::from_ref(&a),
+            5,
+            4,
+            0
+        )
+        .is_err());
+
+    // A loss row must have one entry per cell.
+    let bad = Objective::Decision {
+        loss: vec![vec![0.0, 1.0, 2.0]],
+        labels: None,
+    };
+    assert!(q
+        .resolve_decision("e", "price", &bad, 0.1, &[a], 5, 4, 0)
+        .is_err());
+}
+
 fn coupled_db(sources: Vec<Source>) -> Db {
     let mut slots = BTreeMap::new();
     slots.insert("price".to_string(), price_domain());

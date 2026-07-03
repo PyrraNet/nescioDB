@@ -61,8 +61,9 @@ pub mod time;
 pub mod prelude {
     pub use crate::calibrate::{calibration_pairs, fit_decay, FittedDecay};
     pub use crate::engine::{
-        Bound, FindMode, JoinMatch, JoinOptions, JoinPredicate, JoinResult, Predicate,
-        ProcurementAction, Query, Region, ResolvePlan, ResolveStep, Tri, Value,
+        Bound, DecisionPlan, DecisionStep, FindMode, JoinMatch, JoinOptions, JoinPredicate,
+        JoinResult, Objective, Predicate, ProcurementAction, Query, Region, ResolvePlan,
+        ResolveStep, Tri, Value,
     };
     pub use crate::error::{Error, Result};
     pub use crate::model::coupling::{Compat, Coupling};

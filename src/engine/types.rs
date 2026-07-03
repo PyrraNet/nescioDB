@@ -152,6 +152,42 @@ pub struct ResolvePlan {
     pub total_cost: f64,
 }
 
+// ------------------------------------------------------- decision RESOLVE
+
+/// One step of a decision-theoretic plan: risk is in the objective's units
+/// (variance, absolute error, loss, or bits), not necessarily entropy.
+#[derive(Clone, Debug, Serialize)]
+pub struct DecisionStep {
+    pub action: ProcurementAction,
+    pub expected_risk: f64,
+    pub expected_gain: f64,
+}
+
+/// Result of [`crate::engine::Query::resolve_decision`]: the evidence to
+/// acquire to make a *decision* better, plus the decision itself — what the
+/// DB would choose now versus after the plan runs. Where [`ResolvePlan`]
+/// speaks in bits, this speaks in the objective's own risk units.
+#[derive(Clone, Debug, Serialize)]
+pub struct DecisionPlan {
+    /// Objective name, e.g. `"squared_error"` or `"decision"`.
+    pub objective: String,
+    /// The unit `*_risk` is measured in (`variance` / `abs. error` /
+    /// `loss` / `bits`).
+    pub units: String,
+    pub steps: Vec<DecisionStep>,
+    pub start_risk: f64,
+    /// Greedy estimate for the full plan (median roll-forward).
+    pub planned_risk: f64,
+    /// Seeded Monte-Carlo estimate over full worlds — the number to trust.
+    pub validated_risk: Option<f64>,
+    pub total_cost: f64,
+    /// The decision the DB would make right now.
+    pub recommended_now: String,
+    /// The decision it would make after executing the plan (greedy
+    /// roll-forward).
+    pub recommended_after: String,
+}
+
 // -------------------------------------------------------------------- join
 
 /// A relational predicate between a slot of the left entity and a slot of

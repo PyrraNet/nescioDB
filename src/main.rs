@@ -146,6 +146,36 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// DECIDE: plan evidence that most improves a *decision*, not just
+    /// entropy — the Value of Information for the call you actually face
+    Decide {
+        dir: PathBuf,
+        #[arg(long)]
+        entity: String,
+        #[arg(long)]
+        slot: String,
+        /// JSON file describing the objective, e.g.
+        /// {"kind":"squared_error"} or
+        /// {"kind":"decision","loss":[[..],[..]],"labels":["buy","pass"]}
+        #[arg(long)]
+        objective: PathBuf,
+        /// Stop once the Bayes risk (in the objective's units) is at or below this
+        #[arg(long)]
+        target: f64,
+        /// JSON file: [{name, slot, cost, source: {...}, answer_width?}, ...]
+        #[arg(long)]
+        actions: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        max_steps: usize,
+        #[arg(long, default_value_t = 12)]
+        mc: usize,
+        #[arg(long, default_value_t = 0)]
+        seed: u64,
+        #[arg(long)]
+        at: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// JOIN: relational predicate between entities, under uncertainty
     Join {
         dir: PathBuf,
@@ -604,6 +634,64 @@ fn run(cli: Cli) -> Result<()> {
                         plan.planned_entropy_bits,
                         plan.validated_entropy_bits
                             .map_or("-".to_string(), |v| format!("{v:.2} bits"))
+                    );
+                }
+            }
+            Ok(())
+        }
+        Cmd::Decide {
+            dir,
+            entity,
+            slot,
+            objective,
+            target,
+            actions,
+            max_steps,
+            mc,
+            seed,
+            at,
+            json,
+        } => {
+            let db = Db::open(&dir)?;
+            let q = Query::new(&db, when_or_now(&at)?);
+            let objective: Objective = read_json_file(&objective)?;
+            let actions: Vec<ProcurementAction> = read_json_file(&actions)?;
+            let plan = q.resolve_decision(
+                &entity, &slot, &objective, target, &actions, max_steps, mc, seed,
+            )?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&plan).map_err(Error::Json)?
+                );
+            } else {
+                println!(
+                    "DECIDE {entity}.{slot} [{}]: risk {:.4} {} now, target {target:.4}",
+                    plan.objective, plan.start_risk, plan.units
+                );
+                println!("  would decide now:   {}", plan.recommended_now);
+                if plan.steps.is_empty() {
+                    println!("  no action improves the decision — evidence would not change it");
+                } else {
+                    for (i, s) in plan.steps.iter().enumerate() {
+                        println!(
+                            "  {}. {} (slot {}, cost {}) -> expected risk {:.4} {}",
+                            i + 1,
+                            s.action.name,
+                            s.action.slot,
+                            s.action.cost,
+                            s.expected_risk,
+                            plan.units,
+                        );
+                    }
+                    println!("  would decide after: {}", plan.recommended_after);
+                    println!(
+                        "  total cost {} | greedy {:.4} {} | MC-validated {}",
+                        plan.total_cost,
+                        plan.planned_risk,
+                        plan.units,
+                        plan.validated_risk
+                            .map_or("-".to_string(), |v| format!("{v:.4} {}", plan.units)),
                     );
                 }
             }

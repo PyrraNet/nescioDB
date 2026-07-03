@@ -1,4 +1,11 @@
 //! RESOLVE: the database plans its own evidence procurement.
+//!
+//! Two public verbs share one planner. [`Query::resolve`] drives the target
+//! slot's *entropy* under a bit budget — the classical form. [`Query::resolve_decision`]
+//! generalizes it: instead of entropy, it drives down the **Bayes risk** of
+//! a decision problem ([`Objective`]), so the plan optimizes the Value of
+//! Information for the decision you actually face — of which entropy is the
+//! log-loss special case.
 
 use std::collections::BTreeMap;
 
@@ -7,24 +14,38 @@ use crate::model::domain::Domain;
 use crate::model::evidence::{Claim, Evidence};
 use crate::rng::Rng;
 
-use super::inference::{cell_value, entropy_bits};
-use super::types::{ProcurementAction, ResolvePlan, ResolveStep, Value};
+use super::inference::cell_value;
+use super::objective::Objective;
+use super::types::{
+    DecisionPlan, DecisionStep, ProcurementAction, ResolvePlan, ResolveStep, Value,
+};
 use super::Query;
 
+/// One planned procurement step, in the planner's neutral terms (risk, not
+/// entropy) — each public verb re-labels it for its result type.
+struct RawStep {
+    action: ProcurementAction,
+    expected_risk: f64,
+    expected_gain: f64,
+}
+
+/// The planner's neutral output; [`Query::resolve`] and
+/// [`Query::resolve_decision`] format it into their public result types.
+struct RawPlan {
+    steps: Vec<RawStep>,
+    start: f64,
+    planned: f64,
+    validated: Option<f64>,
+    total_cost: f64,
+    start_post: Vec<f64>,
+    end_post: Vec<f64>,
+}
+
 impl Query<'_> {
-    /// Plan backwards: which minimal-cost evidence pushes the target
-    /// slot's entropy under the goal? Actions may target *other* slots —
-    /// couplings carry the information.
-    ///
-    /// Selection is greedy on expected-gain-per-cost; per-action expected
-    /// entropy averages over where the answer could land (weighted by the
-    /// current marginal). Information gain from conditionally independent
-    /// observations is submodular, so greedy is within (1 - 1/e) of the
-    /// optimal same-cost plan under the usual assumptions. Because the
-    /// greedy roll-forward (answer at the running median) remains an
-    /// approximation, the final plan is re-scored by seeded Monte-Carlo
-    /// simulation over full worlds — `validated_entropy_bits` is the
-    /// number to trust. An empty plan means: nothing on offer helps.
+    /// Plan the minimal-cost evidence that pushes the target slot's entropy
+    /// under `target_entropy_bits`. See [`Query::resolve_decision`] for the
+    /// general decision-theoretic form; this is the `Objective::Entropy`
+    /// special case, kept API-stable.
     #[allow(clippy::too_many_arguments)]
     pub fn resolve(
         &self,
@@ -36,19 +57,125 @@ impl Query<'_> {
         mc_samples: usize,
         seed: u64,
     ) -> Result<ResolvePlan> {
+        let raw = self.plan_procurement(
+            entity,
+            slot,
+            &Objective::Entropy,
+            target_entropy_bits,
+            actions,
+            max_steps,
+            mc_samples,
+            seed,
+        )?;
+        Ok(ResolvePlan {
+            steps: raw
+                .steps
+                .iter()
+                .map(|s| ResolveStep {
+                    action: s.action.clone(),
+                    expected_entropy_bits: s.expected_risk,
+                    expected_gain_bits: s.expected_gain,
+                })
+                .collect(),
+            start_entropy_bits: raw.start,
+            planned_entropy_bits: raw.planned,
+            validated_entropy_bits: raw.validated,
+            total_cost: raw.total_cost,
+        })
+    }
+
+    /// Plan backwards for a *decision*: which minimal-cost evidence pushes
+    /// the Bayes risk of `objective` under `target_risk`? Where entropy asks
+    /// "how uncertain am I", this asks "how much would better evidence
+    /// improve the decision I have to make" — the Value of Information
+    /// proper. Actions may target *other* slots; couplings carry the gain.
+    ///
+    /// The plan also reports what the DB would decide now versus after the
+    /// plan ([`DecisionPlan::recommended_now`] / `recommended_after`), so the
+    /// output is a decision, not just a number. Greedy selection is
+    /// Monte-Carlo-validated exactly as in [`Query::resolve`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_decision(
+        &self,
+        entity: &str,
+        slot: &str,
+        objective: &Objective,
+        target_risk: f64,
+        actions: &[ProcurementAction],
+        max_steps: usize,
+        mc_samples: usize,
+        seed: u64,
+    ) -> Result<DecisionPlan> {
+        let raw = self.plan_procurement(
+            entity,
+            slot,
+            objective,
+            target_risk,
+            actions,
+            max_steps,
+            mc_samples,
+            seed,
+        )?;
+        let domain = self.db.domain(slot)?;
+        Ok(DecisionPlan {
+            objective: objective.label().to_string(),
+            units: objective.units().to_string(),
+            recommended_now: objective.recommendation(domain, &raw.start_post),
+            recommended_after: objective.recommendation(domain, &raw.end_post),
+            steps: raw
+                .steps
+                .iter()
+                .map(|s| DecisionStep {
+                    action: s.action.clone(),
+                    expected_risk: s.expected_risk,
+                    expected_gain: s.expected_gain,
+                })
+                .collect(),
+            start_risk: raw.start,
+            planned_risk: raw.planned,
+            validated_risk: raw.validated,
+            total_cost: raw.total_cost,
+        })
+    }
+
+    /// The shared planner, in terms of an arbitrary [`Objective`]'s Bayes
+    /// risk. Selection is greedy on expected-gain-per-cost; per-action
+    /// expected risk averages over where the answer could land (weighted by
+    /// the current marginal). Information gain from conditionally
+    /// independent observations is submodular, so greedy is within
+    /// (1 - 1/e) of the optimal same-cost plan under the usual assumptions.
+    /// Because the greedy roll-forward (answer at the running median)
+    /// remains an approximation, the final plan is re-scored by seeded
+    /// Monte-Carlo simulation over full worlds — the validated number is the
+    /// one to trust. An empty plan means: nothing on offer helps.
+    #[allow(clippy::too_many_arguments)]
+    fn plan_procurement(
+        &self,
+        entity: &str,
+        slot: &str,
+        objective: &Objective,
+        target: f64,
+        actions: &[ProcurementAction],
+        max_steps: usize,
+        mc_samples: usize,
+        seed: u64,
+    ) -> Result<RawPlan> {
+        let domain = self.db.domain(slot)?;
+        objective.validate(domain)?;
         for a in actions {
             self.db.domain(&a.slot)?;
             a.source.validate()?;
         }
-        let start = entropy_bits(&self.marginal(entity, slot, &BTreeMap::new(), &[])?);
+        let start_post = self.marginal(entity, slot, &BTreeMap::new(), &[])?;
+        let start = objective.risk(domain, &start_post);
         let mut h = start;
         let mut hypo: Vec<Evidence> = Vec::new();
-        let mut steps: Vec<ResolveStep> = Vec::new();
+        let mut steps: Vec<RawStep> = Vec::new();
         let mut remaining: Vec<&ProcurementAction> = actions.iter().collect();
-        while h > target_entropy_bits && !remaining.is_empty() && steps.len() < max_steps {
-            let mut best: Option<(f64, usize, f64)> = None; // (score, idx, expected_h)
+        while h > target && !remaining.is_empty() && steps.len() < max_steps {
+            let mut best: Option<(f64, usize, f64)> = None; // (score, idx, expected_risk)
             for (i, a) in remaining.iter().enumerate() {
-                let eh = self.expected_entropy(entity, slot, a, &hypo)?;
+                let eh = self.expected_risk(entity, slot, objective, a, &hypo)?;
                 let gain = h - eh;
                 if gain <= 1e-9 {
                     continue;
@@ -62,27 +189,36 @@ impl Query<'_> {
                 break; // nothing helps; the DB knows it cannot know more
             };
             let action = remaining.remove(idx);
-            steps.push(ResolveStep {
+            steps.push(RawStep {
                 action: action.clone(),
-                expected_entropy_bits: eh,
-                expected_gain_bits: h - eh,
+                expected_risk: eh,
+                expected_gain: h - eh,
             });
             hypo.push(self.hypothetical_answer(entity, action, &hypo)?);
-            h = entropy_bits(&self.marginal(entity, slot, &BTreeMap::new(), &hypo)?);
+            h = objective.risk(
+                domain,
+                &self.marginal(entity, slot, &BTreeMap::new(), &hypo)?,
+            );
         }
+        let end_post = self.marginal(entity, slot, &BTreeMap::new(), &hypo)?;
         let validated = if !steps.is_empty() && mc_samples > 0 {
-            Some(self.validate_plan(entity, slot, &steps, mc_samples, seed)?)
+            Some(self.validate_plan(entity, slot, objective, &steps, mc_samples, seed)?)
         } else if steps.is_empty() {
             Some(start)
         } else {
             None
         };
-        Ok(ResolvePlan {
-            total_cost: steps.iter().map(|s| s.action.cost).sum(),
+        // `[].sum::<f64>()` seeds with -0.0; the `+ 0.0` normalizes an empty
+        // plan's cost so it reports 0.0, not -0.0.
+        let total_cost = steps.iter().map(|s| s.action.cost).sum::<f64>() + 0.0;
+        Ok(RawPlan {
+            total_cost,
             steps,
-            start_entropy_bits: start,
-            planned_entropy_bits: h,
-            validated_entropy_bits: validated,
+            start,
+            planned: h,
+            validated,
+            start_post,
+            end_post,
         })
     }
 
@@ -121,19 +257,21 @@ impl Query<'_> {
         })
     }
 
-    /// E[H(target | answer)]: average over where the answer could land,
-    /// weighted by the current marginal of the action's slot. Subsampled
-    /// on wide domains for speed.
-    fn expected_entropy(
+    /// E[risk(target | answer)]: average over where the answer could land,
+    /// weighted by the current marginal of the action's slot. Subsampled on
+    /// wide domains for speed.
+    fn expected_risk(
         &self,
         entity: &str,
         target_slot: &str,
+        objective: &Objective,
         action: &ProcurementAction,
         hypo: &[Evidence],
     ) -> Result<f64> {
-        let domain = self.db.domain(&action.slot)?;
+        let action_domain = self.db.domain(&action.slot)?;
+        let target_domain = self.db.domain(target_slot)?;
         let post = self.marginal(entity, &action.slot, &BTreeMap::new(), hypo)?;
-        let n = domain.n();
+        let n = action_domain.n();
         let step = (n / 12).max(1);
         let mut total_w = 0.0;
         let mut acc = 0.0;
@@ -143,23 +281,23 @@ impl Query<'_> {
             if w <= 1e-9 {
                 continue;
             }
-            let center = cell_value(domain, (i + step / 2).min(n - 1));
+            let center = cell_value(action_domain, (i + step / 2).min(n - 1));
             extra.push(self.answer_evidence(entity, action, &center)?);
             let marg = self.marginal(entity, target_slot, &BTreeMap::new(), &extra)?;
             extra.pop();
-            acc += w * entropy_bits(&marg);
+            acc += w * objective.risk(target_domain, &marg);
             total_w += w;
         }
         if total_w <= 0.0 {
             let marg = self.marginal(entity, target_slot, &BTreeMap::new(), hypo)?;
-            return Ok(entropy_bits(&marg));
+            return Ok(objective.risk(target_domain, &marg));
         }
         Ok(acc / total_w)
     }
 
-    /// Roll-forward assumption for greedy planning: the answer lands at
-    /// the running median of the action slot's marginal (less biased than
-    /// the MAP; the final plan is Monte-Carlo-validated regardless).
+    /// Roll-forward assumption for greedy planning: the answer lands at the
+    /// running median of the action slot's marginal (less biased than the
+    /// MAP; the final plan is Monte-Carlo-validated regardless).
     fn hypothetical_answer(
         &self,
         entity: &str,
@@ -180,18 +318,20 @@ impl Query<'_> {
         self.answer_evidence(entity, action, &cell_value(domain, med))
     }
 
-    /// Honest E[H] of the full plan: sample a true world, simulate every
+    /// Honest E[risk] of the full plan: sample a true world, simulate every
     /// action's answer under the same mixture model the likelihoods assume
-    /// (truthful with prob r, noise otherwise), score the target entropy,
+    /// (truthful with prob r, noise otherwise), score the target risk,
     /// average. Deterministic under the seed.
     fn validate_plan(
         &self,
         entity: &str,
         target_slot: &str,
-        steps: &[ResolveStep],
+        objective: &Objective,
+        steps: &[RawStep],
         k: usize,
         seed: u64,
     ) -> Result<f64> {
+        let target_domain = self.db.domain(target_slot)?;
         let seed_s = seed.to_string();
         let mut acc = 0.0;
         for s in 0..k {
@@ -222,7 +362,10 @@ impl Query<'_> {
                 };
                 hypo.push(self.answer_evidence(entity, a, &center)?);
             }
-            acc += entropy_bits(&self.marginal(entity, target_slot, &BTreeMap::new(), &hypo)?);
+            acc += objective.risk(
+                target_domain,
+                &self.marginal(entity, target_slot, &BTreeMap::new(), &hypo)?,
+            );
         }
         Ok(acc / k as f64)
     }

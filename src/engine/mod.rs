@@ -12,13 +12,15 @@
 
 pub mod inference;
 pub mod join;
+pub mod objective;
 pub mod resolve;
 pub mod types;
 
 pub use inference::{entropy_bits, support_indices, SUPPORT_EPS};
+pub use objective::Objective;
 pub use types::{
-    Bound, FindMode, JoinMatch, JoinOptions, JoinPredicate, JoinResult, Predicate,
-    ProcurementAction, Region, ResolvePlan, ResolveStep, Tri, Value,
+    Bound, DecisionPlan, DecisionStep, FindMode, JoinMatch, JoinOptions, JoinPredicate, JoinResult,
+    Predicate, ProcurementAction, Region, ResolvePlan, ResolveStep, Tri, Value,
 };
 
 use std::cell::RefCell;

@@ -17,6 +17,7 @@
 //! POST /ingest         {entity, claim, source, at?}
 //! POST /ingest-batch   [{entity, claim, source, at?}, ...]  (group commit)
 //! POST /resolve        {entity, slot, target_bits, actions, max_steps?, mc?, seed?, at?}
+//! POST /decide         {entity, slot, objective, target, actions, max_steps?, mc?, seed?, at?}
 //! POST /sources        {name, reliability, half_life_days?, axiomatic?}
 //! POST /forget-source  {source}
 //! POST /recalibrate    {source, apply?, min_truth_reliability?}
@@ -33,7 +34,9 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::engine::{FindMode, JoinOptions, JoinPredicate, Predicate, ProcurementAction, Query};
+use crate::engine::{
+    FindMode, JoinOptions, JoinPredicate, Objective, Predicate, ProcurementAction, Query,
+};
 use crate::error::{Error, Result};
 use crate::model::evidence::{Claim, EvidenceRecord, Source};
 use crate::store::Db;
@@ -124,10 +127,10 @@ impl NescioServer {
 }
 
 /// Routes that mutate the database and need the exclusive write lock.
-/// POST /resolve and POST /join only read (they plan / match), so they
+/// POST /resolve, /decide and /join only read (they plan / match), so they
 /// run under the shared read lock alongside the GET verbs.
 fn is_write(method: &str, path: &str) -> bool {
-    method == "POST" && path != "/resolve" && path != "/join"
+    method == "POST" && !matches!(path, "/resolve" | "/decide" | "/join")
 }
 
 /// Pure request handler: (method, path, query, body) -> (status, JSON).
@@ -238,6 +241,33 @@ fn route_read(
                 &b.entity,
                 &b.slot,
                 b.target_bits,
+                &b.actions,
+                b.max_steps.unwrap_or(10),
+                b.mc.unwrap_or(12),
+                b.seed.unwrap_or(0),
+            )?;
+            Ok(serde_json::to_string(&plan)?)
+        }
+        ("POST", "/decide") => {
+            #[derive(Deserialize)]
+            struct Body {
+                entity: String,
+                slot: String,
+                objective: Objective,
+                target: f64,
+                actions: Vec<ProcurementAction>,
+                max_steps: Option<usize>,
+                mc: Option<usize>,
+                seed: Option<u64>,
+                at: Option<serde_json::Value>,
+            }
+            let b: Body = from_body(body)?;
+            let q = Query::new(db, at_value(b.at)?);
+            let plan = q.resolve_decision(
+                &b.entity,
+                &b.slot,
+                &b.objective,
+                b.target,
                 &b.actions,
                 b.max_steps.unwrap_or(10),
                 b.mc.unwrap_or(12),
