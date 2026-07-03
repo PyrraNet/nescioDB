@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nescioDB documentation — the database that knows what it doesn't know</title>
+<meta name="description" content="Documentation for nescioDB — a probabilistic database that stores evidence instead of values: credible regions, entropy in bits, decay by half-life, and queries that plan their own data procurement.">
+<link rel="canonical" href="https://pyrranet.github.io/nescioDB/">
+<meta property="og:title" content="nescioDB documentation">
+<meta property="og:description" content="A probabilistic database that stores ignorance as a first-class object. Claims instead of values, entropy instead of NULL, decay by physics.">
+<meta property="og:image" content="https://raw.githubusercontent.com/PyrraNet/nescioDB/main/assets/nescio.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M24 12h-9v40h9' fill='none' stroke='%23848b96' stroke-width='6'/%3E%3Cpath d='M40 12h9v40h-9' fill='none' stroke='%23848b96' stroke-width='6'/%3E%3Ccircle cx='32' cy='32' r='8' fill='%232B5BE2'/%3E%3C/svg%3E">
+<script>
+(function () {
+  var t = localStorage.getItem("nescio-theme");
+  if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches))
+    document.documentElement.dataset.theme = "dark";
+})();
+</script>
+<style>
+:root {
+  --bg: #ffffff;
+  --panel: #f6f7f9;
+  --ink: #13151a;
+  --muted: #5c6470;
+  --line: #e6e8ed;
+  --accent: #2b5be2;
+  --accent-soft: #eef3fe;
+  --true: #0b7a45;
+  --possible: #96690a;
+  --false: #b3261e;
+  --display: "Avenir Next", Avenir, Futura, "Century Gothic", "URW Gothic", ui-sans-serif, sans-serif;
+  --body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+:root[data-theme="dark"] {
+  --bg: #0d0f13;
+  --panel: #15181e;
+  --ink: #e8ebf1;
+  --muted: #96a0af;
+  --line: #242933;
+  --accent: #82a3ff;
+  --accent-soft: #141d33;
+  --true: #3fcf8e;
+  --possible: #e8b93f;
+  --false: #f2778b;
+}
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  font: 16px/1.65 var(--body);
+  color: var(--ink);
+  background: var(--bg);
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* ---------------------------------------------------------------- header */
+header {
+  position: fixed; inset: 0 0 auto 0; z-index: 40; height: 56px;
+  display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: baseline; gap: 10px; color: var(--ink); font-family: var(--display); }
+.brand:hover { text-decoration: none; }
+.brand .glyph { font-family: var(--mono); font-weight: 600; letter-spacing: -1px; }
+.brand .glyph .dot { color: var(--accent); }
+.brand .name { font-size: 19px; font-weight: 600; letter-spacing: 0.01em; }
+.brand .docs { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.spacer { flex: 1; }
+.header-links { display: flex; align-items: center; gap: 14px; font-family: var(--mono); font-size: 12.5px; }
+.header-links a { color: var(--muted); }
+.header-links a:hover { color: var(--ink); text-decoration: none; }
+.pill {
+  border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px;
+  color: var(--muted); font-family: var(--mono); font-size: 12px;
+}
+button.ghost {
+  border: 1px solid var(--line); background: none; color: var(--muted);
+  font: 12.5px var(--mono); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+}
+button.ghost:hover { color: var(--ink); border-color: var(--muted); }
+#menu-btn { display: none; }
+
+/* ---------------------------------------------------------------- layout */
+.wrap { display: flex; max-width: 1200px; margin: 0 auto; padding-top: 56px; }
+nav#side {
+  width: 232px; flex: none;
+  position: sticky; top: 56px; height: calc(100vh - 56px);
+  overflow-y: auto; padding: 28px 8px 40px 20px;
+  border-right: 1px solid var(--line);
+}
+nav#side .group-label { margin: 22px 0 6px; }
+nav#side .group-label:first-child { margin-top: 0; }
+nav#side a {
+  display: block; padding: 4px 10px; border-radius: 6px;
+  color: var(--muted); font-size: 13.5px;
+}
+nav#side a:hover { color: var(--ink); text-decoration: none; }
+nav#side a.active { color: var(--accent); background: var(--accent-soft); }
+nav#side a code { font-size: 12.5px; }
+main { flex: 1; min-width: 0; padding: 36px 32px 120px 44px; max-width: 820px; }
+
+.group-label {
+  font: 600 11.5px var(--mono); letter-spacing: 0.08em; color: var(--muted);
+}
+.group-label::before { content: "[ "; color: var(--accent); font-weight: 400; }
+.group-label::after { content: " ]"; color: var(--accent); font-weight: 400; }
+
+section { margin-top: 64px; }
+section:first-of-type { margin-top: 0; }
+h1 {
+  font-family: var(--display); font-size: clamp(30px, 4.6vw, 44px);
+  line-height: 1.12; font-weight: 600; letter-spacing: -0.015em; max-width: 17em;
+}
+h2 {
+  font-family: var(--display); font-size: 26px; font-weight: 600;
+  letter-spacing: -0.01em; margin-bottom: 10px; scroll-margin-top: 76px;
+}
+h2 .group-label { display: block; margin-bottom: 8px; }
+h3 { font-family: var(--display); font-size: 18px; font-weight: 600; margin: 28px 0 8px; scroll-margin-top: 76px; }
+p, ul, ol { margin: 10px 0; max-width: 44rem; }
+ul, ol { padding-left: 22px; }
+li { margin: 4px 0; }
+strong { font-weight: 600; }
+.lead { font-size: 18px; color: var(--muted); max-width: 38rem; }
+hr.sep { border: none; border-top: 1px solid var(--line); margin: 56px 0 0; }
+
+/* ------------------------------------------------------------------ code */
+code {
+  font: 0.88em var(--mono);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 0.08em 0.35em;
+}
+pre {
+  position: relative; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; margin: 14px 0;
+  overflow-x: auto; line-height: 1.55;
+}
+pre code { background: none; border: none; padding: 0; font-size: 13px; }
+pre .c { color: var(--muted); }        /* comment / prompt */
+pre .k { color: var(--accent); }       /* keyword-ish highlight */
+.copy-btn {
+  position: absolute; top: 8px; right: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--muted);
+  font: 11px var(--mono); border-radius: 6px; padding: 3px 8px; cursor: pointer;
+  opacity: 0; transition: opacity 0.12s;
+}
+pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+.copy-btn:hover { color: var(--ink); }
+
+/* ----------------------------------------------------------------- table */
+.tablewrap { overflow-x: auto; margin: 14px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th {
+  text-align: left; font: 600 11.5px var(--mono); letter-spacing: 0.06em;
+  color: var(--muted); padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line);
+}
+td { padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+td code { white-space: nowrap; }
+
+/* ------------------------------------------------------------------ tabs */
+.tabs { margin: 14px 0; }
+.tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tabbar button {
+  border: none; background: none; cursor: pointer;
+  font: 12.5px var(--mono); color: var(--muted);
+  padding: 7px 12px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tabbar button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.tabbar button:hover { color: var(--ink); }
+.tabpanel[hidden] { display: none; }
+.tabpanel pre { border-top-left-radius: 0; margin-top: 0; border-top: none; }
+
+/* ----------------------------------------------------------- callout etc */
+.callout {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  background: var(--panel); border-radius: 8px; padding: 12px 16px; margin: 14px 0;
+  font-size: 14.5px; max-width: 44rem;
+}
+.tri { font: 600 12px var(--mono); border-radius: 99px; padding: 1px 9px; white-space: nowrap; }
+.tri.t { color: var(--true); border: 1px solid var(--true); }
+.tri.p { color: var(--possible); border: 1px solid var(--possible); }
+.tri.f { color: var(--false); border: 1px solid var(--false); }
+.verb-q { font-size: 15px; color: var(--muted); font-style: italic; margin-top: -4px; }
+
+/* ------------------------------------------------------------- instrument */
+.hero { padding-top: 16px; }
+.hero .eyebrow { margin-bottom: 14px; }
+.hero .lead { margin: 14px 0 26px; }
+.instrument {
+  border: 1px solid var(--line); border-radius: 14px; background: var(--bg);
+  padding: 20px 22px 16px; margin: 8px 0 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.instrument .head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px;
+  font: 12.5px var(--mono); color: var(--muted); margin-bottom: 18px;
+}
+.instrument .head .cmd { color: var(--ink); }
+.track { position: relative; height: 74px; }
+.track .axis { position: absolute; left: 0; right: 0; top: 36px; height: 1px; background: var(--line); }
+.track .tick { position: absolute; top: 42px; font: 10.5px var(--mono); color: var(--muted); transform: translateX(-50%); }
+.track .region {
+  position: absolute; top: 14px; height: 44px;
+  background: var(--accent-soft);
+}
+.track .bracket { position: absolute; top: 14px; width: 9px; height: 44px; }
+.track .bracket.l { border-left: 3px solid var(--ink); border-top: 3px solid var(--ink); border-bottom: 3px solid var(--ink); }
+.track .bracket.r { border-right: 3px solid var(--ink); border-top: 3px solid var(--ink); border-bottom: 3px solid var(--ink); }
+.track .map-dot {
+  position: absolute; top: 30px; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--accent); transform: translateX(-50%);
+}
+.readouts {
+  display: grid; grid-template-columns: repeat(4, auto); gap: 4px 28px;
+  font: 12px var(--mono); color: var(--muted); margin: 10px 0 16px;
+}
+.readouts b { display: block; font-size: 15px; font-weight: 600; color: var(--ink); }
+.knowbar { grid-column: 1 / -1; height: 4px; background: var(--panel); border-radius: 2px; overflow: hidden; }
+.knowbar i { display: block; height: 100%; background: var(--accent); width: 0; }
+.scrub { display: flex; align-items: center; gap: 12px; }
+.scrub input[type="range"] { flex: 1; accent-color: var(--accent); }
+.timeline { position: relative; height: 20px; margin: 2px 44px 0 76px; }
+.timeline .ev {
+  position: absolute; transform: translateX(-50%); text-align: center;
+  font: 10.5px var(--mono); color: var(--muted); white-space: nowrap;
+}
+.timeline .ev::before { content: "▲"; display: block; font-size: 8px; color: var(--accent); }
+.instrument .foot { font: 11.5px var(--mono); color: var(--muted); margin-top: 14px; }
+.hero-ctas { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.btn {
+  display: inline-block; border-radius: 8px; padding: 8px 16px;
+  font: 600 13.5px var(--body); border: 1px solid var(--line); color: var(--ink);
+}
+.btn:hover { text-decoration: none; border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .btn.primary { color: #0d0f13; }
+.btn.primary:hover { filter: brightness(1.06); }
+
+footer {
+  border-top: 1px solid var(--line); margin-top: 80px; padding: 22px 0 0;
+  font: 12.5px var(--mono); color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 8px 24px;
+}
+footer a { color: var(--muted); }
+footer a:hover { color: var(--ink); }
+
+/* ---------------------------------------------------------------- mobile */
+@media (max-width: 920px) {
+  #menu-btn { display: block; }
+  nav#side {
+    position: fixed; left: 0; top: 56px; bottom: 0; z-index: 30;
+    background: var(--bg); width: 260px; transform: translateX(-100%);
+    transition: transform 0.18s ease; border-right: 1px solid var(--line);
+    padding-left: 24px;
+  }
+  @media (prefers-reduced-motion: reduce) { nav#side { transition: none; } }
+  nav#side.open { transform: translateX(0); box-shadow: 12px 0 40px rgba(0,0,0,0.18); }
+  main { padding: 28px 18px 100px; }
+  .readouts { grid-template-columns: repeat(2, auto); }
+  .brand .docs { display: none; }
+}
+noscript ~ * .tabpanel[hidden] { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <button class="ghost" id="menu-btn" aria-label="Toggle navigation">☰</button>
+  <a class="brand" href="#overview">
+    <span class="glyph">[<span class="dot">·</span>]</span>
+    <span class="name">nescio</span>
+    <span class="docs">docs</span>
+  </a>
+  <span class="spacer"></span>
+  <div class="header-links">
+    <span class="pill">v0.6.0</span>
+    <a href="https://github.com/PyrraNet/nescioDB">GitHub</a>
+    <a href="https://crates.io/crates/nescio">crates.io</a>
+    <a href="https://docs.rs/nescio">docs.rs</a>
+    <button class="ghost" id="theme-btn" aria-label="Toggle color theme">theme</button>
+  </div>
+</header>
+
+<div class="wrap">
+<nav id="side" aria-label="Documentation">
+  <div class="group-label">start</div>
+  <a href="#overview">Overview</a>
+  <a href="#install">Install</a>
+  <a href="#tour">Five-minute tour</a>
+  <div class="group-label">concepts</div>
+  <a href="#claims">Claims, not values</a>
+  <a href="#sources">Sources &amp; decay</a>
+  <a href="#regions">Regions &amp; entropy</a>
+  <a href="#couplings">Couplings</a>
+  <a href="#axioms">Axioms &amp; conflict</a>
+  <a href="#priors">Priors</a>
+  <a href="#forgetting">Forgetting</a>
+  <div class="group-label">the verbs</div>
+  <a href="#bound"><code>bound</code></a>
+  <a href="#sample"><code>sample</code></a>
+  <a href="#certainly"><code>certainly</code></a>
+  <a href="#find"><code>find</code></a>
+  <a href="#join"><code>join</code></a>
+  <a href="#resolve"><code>resolve</code></a>
+  <a href="#decide"><code>decide</code></a>
+  <div class="group-label">reference</div>
+  <a href="#http">HTTP API</a>
+  <a href="#cli">CLI</a>
+  <a href="#clients">Client libraries</a>
+  <a href="#storage">Storage &amp; ops</a>
+</nav>
+
+<main>
+<noscript></noscript>
+
+<!-- ================================================================ HERO -->
+<section class="hero" id="overview">
+  <div class="group-label eyebrow">nescioDB documentation</div>
+  <h1>The database that knows what it doesn't&nbsp;know.</h1>
+  <p class="lead">nescio stores <strong>claims</strong> — who said what, when, and how reliable
+  they are. Credible regions, entropy and answers are derived at query time, and they
+  decay the way the real world does.</p>
+
+  <div class="instrument" id="instrument">
+    <div class="head">
+      <span class="cmd">$ nescio bound herodb --entity villa --slot price --at <span id="ins-date">2026-06-25</span></span>
+      <span>replayed from 105 real queries</span>
+    </div>
+    <div class="track" aria-hidden="true">
+      <div class="axis"></div>
+      <div class="region" id="ins-region"></div>
+      <div class="bracket l" id="ins-bl"></div>
+      <div class="bracket r" id="ins-br"></div>
+      <div class="map-dot" id="ins-dot" title="MAP estimate"></div>
+      <span class="tick" style="left:0%">0</span>
+      <span class="tick" style="left:25%">500k</span>
+      <span class="tick" style="left:50%">1M</span>
+      <span class="tick" style="left:75%">1.5M</span>
+      <span class="tick" style="left:100%">2M</span>
+    </div>
+    <div class="readouts" role="status">
+      <span>day <b id="ins-day">0</b></span>
+      <span>region (95%) <b id="ins-reg">670k – 1,110k</b></span>
+      <span>entropy <b id="ins-bits">4.00 / 7.64 bits</b></span>
+      <span>knowledge <b id="ins-know">48%</b></span>
+      <span class="knowbar"><i id="ins-bar" style="width:48%"></i></span>
+    </div>
+    <div class="scrub">
+      <button class="ghost" id="ins-play">▶ replay</button>
+      <input type="range" id="ins-slider" min="0" max="104" value="0" step="1"
+             aria-label="Days since the first claim">
+      <span style="font:11px var(--mono);color:var(--muted)">728 d</span>
+    </div>
+    <div class="timeline" aria-hidden="true">
+      <span class="ev" style="left:0%">broker: 900–1,000k</span>
+      <span class="ev" style="left:50.1%">broker: 700–800k</span>
+    </div>
+    <div class="foot">Evidence narrows the region. Time widens it again — the broker's
+    half-life is 90 days. No TTL fired, nothing was deleted; the posterior just eroded.</div>
+  </div>
+
+  <div class="hero-ctas">
+    <a class="btn primary" href="#tour">Five-minute tour</a>
+    <a class="btn" href="#claims">How it works</a>
+    <a class="btn" href="#http">HTTP API</a>
+  </div>
+</section>
+
+<!-- ============================================================= INSTALL -->
+<section id="install">
+  <h2><span class="group-label">start</span>Install</h2>
+  <p>nescio is a single binary with an embedded engine — no daemon, no dependencies.
+  A database is just a directory.</p>
+  <pre><code>cargo install nescio</code></pre>
+  <p>Or use it as a Rust library:</p>
+  <pre><code>cargo add nescio</code></pre>
+  <p>Requires Rust 1.75+. Sources are on
+  <a href="https://github.com/PyrraNet/nescioDB">GitHub</a>; the crate API reference lives on
+  <a href="https://docs.rs/nescio">docs.rs</a>.</p>
+</section>
+
+<!-- ================================================================ TOUR -->
+<section id="tour">
+  <h2><span class="group-label">start</span>Five-minute tour</h2>
+  <p>Every output below is the actual output of nescio v0.6.0 — copy the commands and
+  you will get the same numbers.</p>
+
+  <h3>1 · Create a database</h3>
+  <p>The <code>real-estate</code> template ships four slots and five sources of very
+  different trustworthiness:</p>
+  <pre><code><span class="c">$</span> nescio init mydb --template real-estate
+<span class="c">initialized nescioDB in mydb
+  slots:   condition, price, wants_to_sell, year_built
+  sources: broker, land_registry, neighbor, notary, web_scraper</span></code></pre>
+
+  <h3>2 · Ingest a claim</h3>
+  <p>You never write a value. You record that <em>someone said something</em>:</p>
+  <pre><code><span class="c">$</span> nescio ingest mydb --entity villa_1 --slot price \
+    --interval 900000..1000000 --source broker --at 2026-06-25
+<span class="c">ingested evidence for villa_1.price at 2026-06-25</span></code></pre>
+
+  <h3>3 · Ask what is known</h3>
+  <pre><code><span class="c">$</span> nescio bound mydb --entity villa_1 --slot price --at 2026-07-03
+<span class="c">BOUND villa_1.price as of 2026-07-03
+  region (95%): [570000, 1210000]
+  entropy: 4.20 of 7.64 bits (knowledge 45%)
+  MAP estimate: 905000</span></code></pre>
+  <p>The broker said 900–1,000k eight days ago with reliability 0.85 and a 90-day
+  half-life — so the region is already wider than the claim. The database is honest
+  about that.</p>
+
+  <h3>4 · Time-travel</h3>
+  <p>Ask the same question a year later. Nothing was written, nothing expired —
+  the evidence just aged:</p>
+  <pre><code><span class="c">$</span> nescio bound mydb --entity villa_1 --slot price --at 2027-07-03
+<span class="c">BOUND villa_1.price as of 2027-07-03
+  region (95%): [220000, 1570000]
+  entropy: 7.13 of 7.64 bits (knowledge 7%)
+  MAP estimate: 905000</span></code></pre>
+
+  <h3>5 · Let the database plan its own procurement</h3>
+  <p>Describe what evidence <em>could</em> be bought, and <code>resolve</code> picks the
+  cheapest path to a knowledge target:</p>
+  <pre><code><span class="c">$</span> nescio resolve mydb --entity villa_1 --slot price \
+    --target-bits 2.0 --actions actions.json --at 2026-07-03
+<span class="c">RESOLVE villa_1.price: 4.42 bits now, target 2.00
+  1. call the broker (slot price, cost 5) -> expected 2.57 bits
+  2. pull the land registry (slot price, cost 40) -> expected 1.50 bits
+  total cost 45 | greedy estimate 1.50 bits | MC-validated 1.31 bits</span></code></pre>
+  <p>From here: read the <a href="#claims">concepts</a> to understand the model, or jump
+  straight to <a href="#bound">the verbs</a>.</p>
+</section>
+
+<hr class="sep">
+
+<!-- ============================================================== CLAIMS -->
+<section id="claims">
+  <h2><span class="group-label">concepts</span>Claims, not values</h2>
+  <p>A row in a classical database asserts a fact. A record in nescio asserts that a
+  <strong>source made a claim</strong>:</p>
+  <pre><code>{"entity": "villa_1",
+ "claim": {"type": "interval", "slot": "price", "lo": 900000.0, "hi": 1000000.0},
+ "source": "broker",
+ "observed_at": 1782345600}</code></pre>
+  <p>Three claim types cover continuous and categorical slots:</p>
+  <div class="tablewrap"><table>
+    <tr><th>type</th><th>says</th><th>slot kind</th></tr>
+    <tr><td><code>interval</code></td><td>"the value lies in [lo, hi]"</td><td>continuous</td></tr>
+    <tr><td><code>value</code></td><td>"the value is v"</td><td>categorical</td></tr>
+    <tr><td><code>not_value</code></td><td>"the value is <em>not</em> v"</td><td>categorical</td></tr>
+  </table></div>
+  <p>Each claim contributes a likelihood factor under a mixture model: with probability
+  <code>r</code> the source is right (the value is uniform over what it asserted), with
+  <code>1&nbsp;−&nbsp;r</code> the claim is noise (uniform over the whole domain). Two
+  consequences fall out of this, for free:</p>
+  <ul>
+    <li><strong>Precision carries weight.</strong> A narrow interval is stronger evidence
+    than a vague one, from the same source at the same time.</li>
+    <li><strong>Contradiction is representable.</strong> Two sources can disagree; the
+    posterior holds both, weighted by reliability.</li>
+  </ul>
+  <p>Everything else — regions, entropy, answers — is <em>derived at query time</em>.
+  There is no materialized value to become stale.</p>
+</section>
+
+<!-- ============================================================= SOURCES -->
+<section id="sources">
+  <h2><span class="group-label">concepts</span>Sources &amp; decay</h2>
+  <p>A source has a base reliability and, optionally, a half-life. Reliability erodes
+  by physics, not by TTL:</p>
+  <pre><code>r(t) = r0 · 0.5 ^ (age_days / half_life_days)</code></pre>
+  <p>As <code>r&nbsp;→&nbsp;0</code> the claim's likelihood factor flattens toward
+  uniform: old evidence loosens its grip on the region automatically. Deleting is
+  unnecessary — and when you do delete (<a href="#forgetting">forgetting</a>), regions
+  widen correctly because nothing was ever aggregated.</p>
+  <pre><code><span class="c">$</span> nescio source mydb --name web_scraper --reliability 0.7 --half-life-days 45</code></pre>
+  <p>The template's sources show the intended spread:</p>
+  <div class="tablewrap"><table>
+    <tr><th>source</th><th>r0</th><th>half-life</th><th></th></tr>
+    <tr><td><code>land_registry</code></td><td>1.0</td><td>—</td><td>axiomatic: never decays, never wrong</td></tr>
+    <tr><td><code>notary</code></td><td>1.0</td><td>—</td><td>axiomatic</td></tr>
+    <tr><td><code>broker</code></td><td>0.85</td><td>90 d</td><td></td></tr>
+    <tr><td><code>web_scraper</code></td><td>0.7</td><td>45 d</td><td></td></tr>
+    <tr><td><code>neighbor</code></td><td>0.4</td><td>30 d</td><td>gossip, weakly informative</td></tr>
+  </table></div>
+  <p>Non-axiomatic reliability is capped just below 1.0 — two contradicting hard claims
+  would otherwise annihilate the posterior. Only <a href="#axioms">axioms</a> may be
+  absolute.</p>
+  <p>If the log contains ground truth (axiomatic evidence about the same slots a soft
+  source reported on), nescio can <strong>learn a source's physics</strong> instead of
+  you guessing them:</p>
+  <pre><code><span class="c">$</span> nescio recalibrate mydb --source web_scraper --apply</code></pre>
+</section>
+
+<!-- ============================================================= REGIONS -->
+<section id="regions">
+  <h2><span class="group-label">concepts</span>Regions &amp; entropy</h2>
+  <p>A slot's domain is discretized into cells (bins for continuous slots, one cell per
+  value for categorical ones). The posterior over those cells yields everything
+  <code>bound</code> reports:</p>
+  <ul>
+    <li><strong>Credible region</strong> — the smallest set of cells holding (by default)
+    95% of the probability mass, merged into intervals. A field without evidence is not
+    <code>NULL</code>; it is a region covering the whole domain.</li>
+    <li><strong>Entropy in bits</strong> — how ignorant the database really is.
+    <code>7.64 bits</code> is maximal for a 200-bin slot (log₂ 200); <code>0</code> is a
+    collapsed point. The ratio is reported as <em>knowledge</em>.</li>
+    <li><strong>MAP estimate</strong> — the single most probable cell, if you must have
+    one number. It is deliberately the <em>last</em> line of the output.</li>
+  </ul>
+  <div class="callout">A classical relational database is the special case where every
+  claim is an axiom and every region is a point. nescio is a strict superset — you can
+  run it as a normal database and pay nothing for the generality until you need it.</div>
+</section>
+
+<!-- =========================================================== COUPLINGS -->
+<section id="couplings">
+  <h2><span class="group-label">concepts</span>Couplings</h2>
+  <p>Couplings let knowledge flow between slots of the same entity. The template couples
+  <code>condition&nbsp;~&nbsp;price</code>: renovated villas center on 1.3M, derelict
+  ones on 500k. Watch what a claim about the <em>condition</em> does to the
+  <em>price</em>:</p>
+  <pre><code><span class="c">$</span> nescio ingest mydb --entity villa_1 --slot condition \
+    --value renovated --source web_scraper --at 2026-06-20
+<span class="c">$</span> nescio bound mydb --entity villa_1 --slot price --at 2026-07-03
+<span class="c">BOUND villa_1.price as of 2026-07-03
+  region (95%): [900000, 1550000]      <span class="k">← was [570000, 1210000]</span>
+  entropy: 4.42 of 7.64 bits (knowledge 42%)
+  MAP estimate: 995000                 <span class="k">← was 905000</span></span></code></pre>
+  <p>The region shifted upward — and note that knowledge <em>dropped</em> from 45% to
+  42%. The scraper's "renovated" pulls toward 1.3M while the broker's interval says
+  900–1,000k; the posterior honestly holds the tension between them. Evidence that
+  disagrees with what you believed makes you less certain. That is a feature.</p>
+  <p>Coupling kinds: <code>gaussian_by_category</code> (categorical&nbsp;→&nbsp;continuous
+  centers), <code>step_threshold</code> (continuous threshold reweights categories), and
+  <code>matrix</code> (categorical&nbsp;×&nbsp;categorical compatibility weights). They
+  are declared once in <code>schema.json</code> and apply to every entity.</p>
+</section>
+
+<!-- ============================================================== AXIOMS -->
+<section id="axioms">
+  <h2><span class="group-label">concepts</span>Axioms &amp; conflict</h2>
+  <p>An axiomatic source has reliability 1.0 and no half-life: the land registry, a
+  notary, a court ruling. Axioms are the only way to make something <em>certain</em> —
+  and their regions never widen:</p>
+  <pre><code><span class="c">$</span> nescio bound mydb --entity villa_3 --slot price --at 2036-07-03
+<span class="c">BOUND villa_3.price as of 2036-07-03
+  region (95%): [940000, 990000]       <span class="k">← identical ten years later</span>
+  entropy: 2.32 of 7.64 bits (knowledge 70%)</span></code></pre>
+  <p>Two axioms that contradict each other are not a bug to paper over — they are a real
+  state of the world, and nescio surfaces them as a conflict when you query the affected
+  slot. Over HTTP that is a <code>409</code>:</p>
+  <pre><code><span class="c">$</span> curl 'localhost:7777/bound?entity=villa_3&amp;slot=price'
+<span class="c">{"error":"axiom conflict: villa_3.price: axiomatic evidence conflicts"}
+HTTP 409</span></code></pre>
+</section>
+
+<!-- ============================================================== PRIORS -->
+<section id="priors">
+  <h2><span class="group-label">concepts</span>Priors</h2>
+  <p>When many entities share background knowledge ("prices in this district cluster
+  around 800k"), register the prior once and reference it per entity — it is stored
+  once, never copied:</p>
+  <pre><code><span class="c">$</span> nescio prior register mydb --name district_9 --slot price --gaussian 800000,150000
+<span class="c">$</span> nescio prior use mydb --entity villa_2 --slot price --name district_9</code></pre>
+  <p>Arbitrary shapes go in via <code>--weights-file</code> (one weight per cell of the
+  slot's domain).</p>
+</section>
+
+<!-- =========================================================== FORGETTING -->
+<section id="forgetting">
+  <h2><span class="group-label">concepts</span>Forgetting</h2>
+  <p>GDPR erasure is a first-class verb. Because nothing is aggregated — every answer is
+  derived from the raw claims — physically removing a source's evidence makes every
+  derived region widen <em>correctly</em>. There is no cached aggregate that could
+  forget to forget:</p>
+  <pre><code><span class="c">$</span> nescio forget-source mydb --source web_scraper
+<span class="c">physically erased 2 evidence records from source "web_scraper"; all derived regions widen</span>
+
+<span class="c">$</span> nescio bound mydb --entity villa_2 --slot price --at 2026-07-03
+<span class="c">  entropy: 7.22 of 7.64 bits (knowledge 6%)   <span class="k">← was 6.29 bits (18%)</span></span></code></pre>
+</section>
+
+<hr class="sep">
+
+<!-- =============================================================== BOUND -->
+<section id="bound">
+  <h2><span class="group-label">the verbs</span><code>bound</code></h2>
+  <p class="verb-q">"What is known — and how ignorant are you, really?"</p>
+  <div class="tabs">
+    <div class="tabbar" role="tablist">
+      <button role="tab" aria-selected="true">CLI</button>
+      <button role="tab" aria-selected="false">HTTP</button>
+      <button role="tab" aria-selected="false">Rust</button>
+    </div>
+    <div class="tabpanel" role="tabpanel">
+<pre><code><span class="c">$</span> nescio bound mydb --entity villa_1 --slot price --credible 0.95 --at 2026-07-03
+<span class="c">BOUND villa_1.price as of 2026-07-03
+  region (95%): [570000, 1210000]
+  entropy: 4.20 of 7.64 bits (knowledge 45%)
+  MAP estimate: 905000</span></code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">$</span> curl 'localhost:7777/bound?entity=villa_1&amp;slot=price&amp;at=2026-07-03'
+<span class="c">{
+  "entity": "villa_1",
+  "slot": "price",
+  "region": [[900000.0, 1550000.0]],
+  "entropy_bits": 4.417295722211798,
+  "max_entropy_bits": 7.643856189774724,
+  "map_estimate": 995000.0
+}</span></code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code>use nescio::prelude::*;
+use nescio::time::now_unix;
+
+let db = Db::open(std::path::Path::new("mydb"))?;
+let q = Query::new(&amp;db, now_unix());
+
+let b = q.bound("villa_1", "price", 0.95)?;
+println!("{:.2} bits, knowledge {:.0}%", b.entropy_bits, b.knowledge_ratio() * 100.0);</code></pre>
+    </div>
+  </div>
+  <p>The credible level defaults to 0.95. Add <code>--json</code> for machine-readable
+  output; the region of a categorical slot is a value set instead of intervals.</p>
+</section>
+
+<!-- ============================================================== SAMPLE -->
+<section id="sample">
+  <h2><span class="group-label">the verbs</span><code>sample</code></h2>
+  <p class="verb-q">"Show me one world that is consistent with everything you know."</p>
+  <div class="tabs">
+    <div class="tabbar" role="tablist">
+      <button role="tab" aria-selected="true">CLI</button>
+      <button role="tab" aria-selected="false">HTTP</button>
+    </div>
+    <div class="tabpanel" role="tabpanel">
+<pre><code><span class="c">$</span> nescio sample mydb --entity villa_1 --seed 1 --at 2026-07-03
+<span class="c">SAMPLE villa_1 (seed 1) as of 2026-07-03
+  condition = renovated
+  price = 916328.3849294278
+  wants_to_sell = true
+  year_built = 2006.148830186706</span></code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">$</span> curl 'localhost:7777/sample?entity=villa_1&amp;seed=1&amp;at=2026-07-03'</code></pre>
+    </div>
+  </div>
+  <p>Samples respect couplings — a world where <code>condition&nbsp;=&nbsp;derelict</code>
+  drags its sampled price down. The same seed always yields the same world, which makes
+  downstream Monte-Carlo pipelines reproducible; different seeds explore the posterior.</p>
+</section>
+
+<!-- =========================================================== CERTAINLY -->
+<section id="certainly">
+  <h2><span class="group-label">the verbs</span><code>certainly</code></h2>
+  <p class="verb-q">"Is this true — and do you actually know it, or merely believe it?"</p>
+  <p>Three-valued logic as region containment:
+  <span class="tri t">true</span> if the whole region satisfies the predicate,
+  <span class="tri f">false</span> if none of it does,
+  <span class="tri p">possible</span> otherwise.</p>
+  <div class="tabs">
+    <div class="tabbar" role="tablist">
+      <button role="tab" aria-selected="true">CLI</button>
+      <button role="tab" aria-selected="false">HTTP</button>
+    </div>
+    <div class="tabpanel" role="tabpanel">
+<pre><code><span class="c">$</span> nescio certainly mydb --entity villa_3 --slot price --lt 1000000 --at 2026-07-03
+true
+<span class="c">$</span> nescio certainly mydb --entity villa_3 --slot price --gt 1000000 --at 2026-07-03
+false
+<span class="c">$</span> nescio certainly mydb --entity villa_1 --slot price --gt 950000 --at 2026-07-03
+possible</code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">$</span> curl 'localhost:7777/certainly?entity=villa_3&amp;slot=price&amp;op=lt&amp;value=1000000'
+<span class="c">{"result":"true"}</span></code></pre>
+    </div>
+  </div>
+  <p>villa_3's price rests on a notarial axiom, so hard answers exist. villa_1 rests on
+  soft evidence — under the mixture model soft evidence never zeroes out any cell, so
+  its predicates can only ever be <em>possible</em>. If you need certainty, you need an
+  axiom; the database will not fake it.</p>
+  <p>Predicates: <code>--gt</code>, <code>--lt</code>, <code>--between LO..HI</code>
+  (continuous), <code>--is</code>, <code>--is-not</code> (categorical).</p>
+</section>
+
+<!-- ================================================================ FIND -->
+<section id="find">
+  <h2><span class="group-label">the verbs</span><code>find</code></h2>
+  <p class="verb-q">"Which entities certainly / possibly lie in this range?"</p>
+  <div class="tabs">
+    <div class="tabbar" role="tablist">
+      <button role="tab" aria-selected="true">CLI</button>
+      <button role="tab" aria-selected="false">HTTP</button>
+    </div>
+    <div class="tabpanel" role="tabpanel">
+<pre><code><span class="c">$</span> nescio find mydb --slot price --lo 900000 --hi 1000000 --mode possible --at 2026-07-03
+villa_1
+villa_2
+villa_3
+<span class="c">$</span> nescio find mydb --slot price --lo 900000 --hi 1000000 --mode certain --at 2026-07-03
+villa_3</code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">$</span> curl 'localhost:7777/find?slot=price&amp;lo=900000&amp;hi=1000000&amp;mode=certain'
+<span class="c">["villa_3"]</span></code></pre>
+    </div>
+  </div>
+  <p>The two modes are the two useful questions: <code>possible</code> is recall
+  (candidates you must not miss), <code>certain</code> is precision (matches you can act
+  on without checking). A classical <code>WHERE</code> clause silently conflates them.</p>
+</section>
+
+<!-- ================================================================ JOIN -->
+<section id="join">
+  <h2><span class="group-label">the verbs</span><code>join</code></h2>
+  <p class="verb-q">"Which pairs of entities relate — and how sure is that?"</p>
+  <p>Joining two regions is itself uncertain, so every match carries a
+  <strong>probability</strong> (exact integral over the two posteriors, no sampling)
+  <em>and</em> a three-valued <strong>certainty</strong>.</p>
+  <div class="tabs">
+    <div class="tabbar" role="tablist">
+      <button role="tab" aria-selected="true">CLI</button>
+      <button role="tab" aria-selected="false">HTTP</button>
+    </div>
+    <div class="tabpanel" role="tabpanel">
+<pre><code><span class="c"># comparable properties: |left.price − right.price| ≤ 150k</span>
+<span class="c">$</span> nescio join mydb --op approx --left price --right price --tol 150000 --at 2026-07-03
+<span class="c">  villa_1                  villa_3                  p=0.885  possible
+  villa_1                  villa_2                  p=0.164  possible
+  villa_2                  villa_3                  p=0.163  possible
+  3 pairs examined</span>
+
+<span class="c"># who is certainly / probably dearer than whom?</span>
+<span class="c">$</span> nescio join mydb --op gt --left price --right price --at 2026-07-03
+<span class="c">  villa_3                  villa_2                  p=0.753  possible
+  villa_1                  villa_2                  p=0.749  possible
+  ...</span></code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">$</span> curl -X POST localhost:7777/join -d '{
+  "predicate": {"op": "approx", "left": "price", "right": "price", "tol": 150000},
+  "options": {"min_probability": 0.5},
+  "at": "2026-07-03"
+}'
+<span class="c">{
+  "matches": [
+    {"left": "villa_1", "right": "villa_3",
+     "probability": 0.8849608215246407, "certainty": "possible"}
+  ],
+  "pairs_examined": 3,
+  "truncated": false
+}</span></code></pre>
+    </div>
+  </div>
+  <p>Operators: <code>gt</code>, <code>lt</code>, <code>approx</code> (numeric,
+  needs <code>--tol</code>) and <code>same</code> (categorical — entity resolution and
+  dedup). Useful options:</p>
+  <div class="tablewrap"><table>
+    <tr><th>option</th><th></th></tr>
+    <tr><td><code>--min-prob 0.8</code></td><td>keep only matches at least this probable</td></tr>
+    <tr><td><code>--certain</code></td><td>keep only regionally-certain matches</td></tr>
+    <tr><td><code>--left-prefix a_</code></td><td>restrict a side by entity-id prefix ("kinds" by naming convention)</td></tr>
+    <tr><td><code>--all-entities</code></td><td>include entities with no evidence on the slot (default: excluded — they would match everything as "possible")</td></tr>
+    <tr><td><code>--limit 20</code></td><td>cap returned matches, ranked by probability</td></tr>
+  </table></div>
+  <p>Pairs are pruned to the regionally possible before any integral is computed. An
+  unselective join is quadratic — that is fundamental to joins, SQL included — so
+  evaluation is capped and the cap is <em>reported</em> (<code>truncated: true</code>),
+  never silently applied.</p>
+</section>
+
+<!-- ============================================================= RESOLVE -->
+<section id="resolve">
+  <h2><span class="group-label">the verbs</span><code>resolve</code></h2>
+  <p class="verb-q">"Which minimal-cost evidence would push entropy under a target?"</p>
+  <p>Describe the procurement actions you could take — each is "ask this source about
+  this slot, at this cost":</p>
+  <pre><code><span class="c"># actions.json</span>
+[
+  {"name": "call the broker",        "slot": "price",     "cost": 5,
+   "source": {"name": "broker", "reliability": 0.85, "half_life_days": 90},
+   "answer_width": 100000},
+  {"name": "pull the land registry", "slot": "price",     "cost": 40,
+   "source": {"name": "land_registry", "reliability": 1.0, "axiomatic": true},
+   "answer_width": 20000},
+  {"name": "ask the neighbor",       "slot": "condition", "cost": 1,
+   "source": {"name": "neighbor", "reliability": 0.4, "half_life_days": 30}}
+]</code></pre>
+  <div class="tabs">
+    <div class="tabbar" role="tablist">
+      <button role="tab" aria-selected="true">CLI</button>
+      <button role="tab" aria-selected="false">HTTP</button>
+    </div>
+    <div class="tabpanel" role="tabpanel">
+<pre><code><span class="c">$</span> nescio resolve mydb --entity villa_1 --slot price \
+    --target-bits 2.0 --actions actions.json --at 2026-07-03
+<span class="c">RESOLVE villa_1.price: 4.42 bits now, target 2.00
+  1. call the broker (slot price, cost 5) -> expected 2.57 bits
+  2. pull the land registry (slot price, cost 40) -> expected 1.50 bits
+  total cost 45 | greedy estimate 1.50 bits | MC-validated 1.31 bits</span></code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">$</span> curl -X POST localhost:7777/resolve -d '{
+  "entity": "villa_1", "slot": "price", "target_bits": 2.0,
+  "actions": [{"name": "call the broker", "slot": "price", "cost": 5,
+               "source": {"name": "broker", "reliability": 0.85, "half_life_days": 90},
+               "answer_width": 100000}],
+  "at": "2026-07-03"
+}'</code></pre>
+    </div>
+  </div>
+  <p>Three details worth knowing:</p>
+  <ul>
+    <li>Actions on <em>other slots</em> count — couplings carry the information gain
+    across slot boundaries. Asking the neighbor about the condition can reduce price
+    entropy.</li>
+    <li>The greedy plan is <strong>Monte-Carlo validated</strong> over full sampled
+    worlds (seeded, reproducible). The validated number is the one to trust.</li>
+    <li>If no action helps, the plan says so: <em>"the DB cannot know more this
+    way"</em> is an answer, not a failure.</li>
+  </ul>
+</section>
+
+<!-- ============================================================== DECIDE -->
+<section id="decide">
+  <h2><span class="group-label">the verbs</span><code>decide</code></h2>
+  <p class="verb-q">"Which evidence most improves the decision I actually face?"</p>
+  <p>Entropy is only the Bayes risk under log-loss. A cheap observation that halves the
+  entropy is worthless if it never changes what you would do — and a tiny one that flips
+  a high-stakes call is worth a lot. <code>decide</code> plans against an
+  <strong>objective</strong> instead of bits: the true Value of Information.</p>
+  <div class="tablewrap"><table>
+    <tr><th>objective</th><th>you commit to</th><th>risk is measured in</th></tr>
+    <tr><td><code>{"kind": "entropy"}</code></td><td>the full posterior</td><td>bits (classical resolve)</td></tr>
+    <tr><td><code>{"kind": "squared_error"}</code></td><td>the posterior mean</td><td>variance</td></tr>
+    <tr><td><code>{"kind": "absolute_error"}</code></td><td>the posterior median</td><td>expected abs. error</td></tr>
+    <tr><td><code>{"kind": "decision", "loss": [[…]], "labels": […]}</code></td><td>one of n decisions</td><td>expected loss</td></tr>
+  </table></div>
+<pre><code><span class="c">$</span> nescio decide mydb --entity villa_1 --slot price \
+    --objective objective.json --target 10000 --actions actions.json --at 2026-07-03
+<span class="c">DECIDE villa_1.price [absolute_error]: risk 71027.9574 abs. error now, target 10000.0000
+  would decide now:   estimate 955000
+  1. call the broker (slot price, cost 5) -> expected risk 32243.8096 abs. error
+  2. pull the land registry (slot price, cost 40) -> expected risk 5000.9287 abs. error
+  would decide after: estimate 955000
+  total cost 45 | greedy 5001.2186 abs. error | MC-validated 4664.3089 abs. error</span></code></pre>
+  <p>Read it as: "your price estimate is currently off by ±71k in expectation; a 5-unit
+  broker call cuts that to ±32k; adding the registry pull gets you under ±5k." The plan
+  also reports what it <em>would decide</em> before and after — if the decision would
+  not change, the evidence was not worth buying. Same endpoint shape as resolve:
+  <code>POST /decide</code> with <code>objective</code> and <code>target</code>.</p>
+</section>
+
+<hr class="sep">
+
+<!-- ================================================================ HTTP -->
+<section id="http">
+  <h2><span class="group-label">reference</span>HTTP API</h2>
+  <p>One process owns the database directory:</p>
+  <pre><code><span class="c">$</span> nescio serve mydb --port 7777 --bind 127.0.0.1
+<span class="c">nescioDB serving mydb on http://127.0.0.1:7777 (parallel reads, exclusive writes)</span></code></pre>
+  <p>All responses are JSON. Queries — including the read-only <code>POST /resolve</code>,
+  <code>/decide</code> and <code>/join</code> — run concurrently under a shared read
+  lock; mutations take the write lock exclusively and are durable (fsynced) before they
+  are acknowledged.</p>
+  <div class="tablewrap"><table>
+    <tr><th>route</th><th>parameters / body</th></tr>
+    <tr><td><code>GET /health</code></td><td>—</td></tr>
+    <tr><td><code>GET /status</code></td><td>slots, couplings, sources, counts</td></tr>
+    <tr><td><code>GET /bound</code></td><td><code>entity, slot [, credible=0.95] [, at]</code></td></tr>
+    <tr><td><code>GET /sample</code></td><td><code>entity [, seed=0] [, at]</code></td></tr>
+    <tr><td><code>GET /certainly</code></td><td><code>entity, slot, op=gt|lt|between|is|is_not [, value] [, lo, hi] [, at]</code></td></tr>
+    <tr><td><code>GET /find</code></td><td><code>slot, lo, hi [, mode=possible|certain] [, at]</code></td></tr>
+    <tr><td><code>POST /join</code></td><td><code>{predicate: {op, left, right, tol?}, options?, at?}</code></td></tr>
+    <tr><td><code>POST /resolve</code></td><td><code>{entity, slot, target_bits, actions, max_steps?, mc?, seed?, at?}</code></td></tr>
+    <tr><td><code>POST /decide</code></td><td><code>{entity, slot, objective, target, actions, max_steps?, mc?, seed?, at?}</code></td></tr>
+    <tr><td><code>POST /ingest</code></td><td><code>{entity, claim, source, at?}</code></td></tr>
+    <tr><td><code>POST /ingest-batch</code></td><td><code>[{entity, claim, source, at?}, …]</code> — one group commit, one fsync</td></tr>
+    <tr><td><code>POST /sources</code></td><td><code>{name, reliability, half_life_days?, axiomatic?}</code></td></tr>
+    <tr><td><code>POST /forget-source</code></td><td><code>{source}</code></td></tr>
+    <tr><td><code>POST /recalibrate</code></td><td><code>{source, apply?, min_truth_reliability?}</code></td></tr>
+    <tr><td><code>POST /priors/register</code></td><td><code>{name, slot, weights}</code></td></tr>
+    <tr><td><code>POST /priors/use</code></td><td><code>{entity, slot, name}</code></td></tr>
+  </table></div>
+  <p><code>at</code> accepts <code>"YYYY-MM-DD"</code>, a date-time, or unix seconds —
+  in query strings and JSON bodies alike; it defaults to now. Status codes:</p>
+  <div class="tablewrap"><table>
+    <tr><th>code</th><th>meaning</th></tr>
+    <tr><td><code>200</code></td><td>ok</td></tr>
+    <tr><td><code>400</code></td><td>invalid request — <code>{"error": "…"}</code> says what</td></tr>
+    <tr><td><code>404</code></td><td>no such route</td></tr>
+    <tr><td><code>409</code></td><td>axiom conflict — contradiction is a real state, not a server failure</td></tr>
+    <tr><td><code>413</code></td><td>body over 8 MiB</td></tr>
+  </table></div>
+  <p>The server binds to localhost by default and speaks plain HTTP without
+  authentication — put it behind a reverse proxy if you expose it beyond the host.</p>
+</section>
+
+<!-- ================================================================= CLI -->
+<section id="cli">
+  <h2><span class="group-label">reference</span>CLI</h2>
+  <p>Every query command takes <code>--at</code> (time travel is a parameter, defaulting
+  to now) and the verbs take <code>--json</code> for machine-readable output.
+  <code>nescio &lt;command&gt; --help</code> shows every flag.</p>
+  <div class="tablewrap"><table>
+    <tr><th>command</th><th></th></tr>
+    <tr><td><code>init</code></td><td>create a database — <code>--template real-estate</code> or <code>--schema</code> + <code>--sources</code> JSON files</td></tr>
+    <tr><td><code>status</code></td><td>slots, couplings, sources, entity and record counts</td></tr>
+    <tr><td><code>source</code></td><td>register or update a source (<code>--reliability</code>, <code>--half-life-days</code>, <code>--axiomatic</code>)</td></tr>
+    <tr><td><code>ingest</code></td><td>append one claim: <code>--interval LO..HI</code> | <code>--value V</code> | <code>--not-value V</code></td></tr>
+    <tr><td><code>bound</code></td><td>credible region + entropy + MAP (<code>--credible 0.95</code>)</td></tr>
+    <tr><td><code>sample</code></td><td>one consistent world, deterministic under <code>--seed</code></td></tr>
+    <tr><td><code>certainly</code></td><td>three-valued predicate: <code>--gt/--lt/--between/--is/--is-not</code></td></tr>
+    <tr><td><code>find</code></td><td>entities in a range, <code>--mode possible|certain</code></td></tr>
+    <tr><td><code>join</code></td><td>uncertain join, <code>--op gt|lt|approx|same</code></td></tr>
+    <tr><td><code>resolve</code></td><td>plan evidence to reach <code>--target-bits</code>, given <code>--actions</code></td></tr>
+    <tr><td><code>decide</code></td><td>plan evidence against an <code>--objective</code>, target in its risk units</td></tr>
+    <tr><td><code>prior register / use</code></td><td>shared priors (<code>--gaussian CENTER,SIGMA</code> or <code>--weights-file</code>)</td></tr>
+    <tr><td><code>forget-source</code></td><td>GDPR erasure; all derived regions widen</td></tr>
+    <tr><td><code>recalibrate</code></td><td>learn a source's r0 / half-life from ground truth (<code>--apply</code>)</td></tr>
+    <tr><td><code>import / export</code></td><td>JSONL in (one group commit) / JSONL out</td></tr>
+    <tr><td><code>serve</code></td><td>the HTTP API (<code>--port 7777</code>, <code>--bind 127.0.0.1</code>)</td></tr>
+  </table></div>
+</section>
+
+<!-- ============================================================= CLIENTS -->
+<section id="clients">
+  <h2><span class="group-label">reference</span>Client libraries</h2>
+  <p>Typed clients wrap every server verb. Both are zero-dependency by design — the
+  TypeScript client uses the global <code>fetch</code>, the Java client uses the JDK's
+  <code>java.net.http</code> plus a small bundled JSON codec.</p>
+  <div class="tabs">
+    <div class="tabbar" role="tablist">
+      <button role="tab" aria-selected="true">TypeScript</button>
+      <button role="tab" aria-selected="false">Java</button>
+    </div>
+    <div class="tabpanel" role="tabpanel">
+<pre><code><span class="c">// npm install nesciodb   (Node 18+ or any modern browser)</span>
+import { NescioClient, claim } from "nesciodb";
+
+const db = new NescioClient("http://localhost:7777");
+
+await db.ingest("villa_1", claim.interval("price", 900_000, 1_000_000), "broker", {
+  at: "2026-06-25",
+});
+
+const b = await db.bound("villa_1", "price", { at: "2026-07-03" });
+console.log(b.entropyBits, b.knowledgeRatio, b.region);
+
+const { matches } = await db.join(
+  { op: "approx", left: "price", right: "price", tol: 50_000 },
+  { minProbability: 0.5 },
+);</code></pre>
+    </div>
+    <div class="tabpanel" role="tabpanel" hidden>
+<pre><code><span class="c">// JDK 17+; drop the three files into your project, or mvn package</span>
+import dev.nescio.NescioClient;
+import dev.nescio.NescioClient.*;
+
+var db = new NescioClient("http://localhost:7777");
+
+db.ingest("villa_1", Claim.interval("price", 900_000, 1_000_000), "broker",
+          At.date("2026-06-25"));
+
+Bound b = db.bound("villa_1", "price", At.date("2026-07-03"));
+System.out.printf("%.2f bits, knowledge %.0f%%%n",
+    b.entropyBits(), b.knowledgeRatio() * 100);</code></pre>
+    </div>
+  </div>
+  <p>Details and full method lists:
+  <a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/typescript">TypeScript client</a> ·
+  <a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/java">Java client</a>.
+  Non-2xx responses throw (<code>NescioError</code> / <code>NescioException</code>) with
+  the status and the server's message.</p>
+</section>
+
+<!-- ============================================================= STORAGE -->
+<section id="storage">
+  <h2><span class="group-label">reference</span>Storage &amp; ops</h2>
+  <p>A database is a directory. Config is human-readable JSON; the evidence log is a
+  compact append-only binary (~2.6× smaller than JSONL, no parse cost on replay):</p>
+  <pre><code>mydb/
+  schema.json     slots and couplings
+  sources.json    reliability, half-life, axiomatic
+  priors.json     shared priors
+  log.bin         the evidence log (append-only binary)</code></pre>
+  <p>The binary log is never the only copy of the truth you can read —
+  <code>export</code> reconstructs JSONL any time, and <code>import</code> goes the
+  other way with a single group commit:</p>
+  <pre><code><span class="c">$</span> nescio export mydb | head -1
+<span class="c">{"entity":"villa_1","claim":{"type":"interval","slot":"price","lo":900000.0,"hi":1000000.0},"source":"broker","observed_at":1782345600}</span></code></pre>
+  <h3>Performance</h3>
+  <p>Measured on an M-series MacBook, 200,000 entities / 400,000 evidence records
+  (<code>cargo run --release --example bench</code>):</p>
+  <pre><code>ingest (group commit, one fsync)   ~1.1M records/s
+open / log replay                  ~1.2M records/s
+bound                              4.5 µs  (8.6 µs with couplings)
+resolve                            &lt; 1 ms</code></pre>
+  <p>Every write is durable before it is acknowledged — a batch of any size costs one
+  fsync.</p>
+
+  <footer>
+    <span>© PyrraNet · MIT license</span>
+    <a href="https://github.com/PyrraNet/nescioDB">GitHub</a>
+    <a href="https://crates.io/crates/nescio">crates.io</a>
+    <a href="https://docs.rs/nescio">docs.rs (Rust API)</a>
+    <a href="https://github.com/PyrraNet/nescioDB/blob/main/CHANGELOG.md">Changelog</a>
+  </footer>
+</section>
+
+</main>
+</div>
+
+<script>
+/* ------------------------------------------------------------ theme */
+document.getElementById("theme-btn").addEventListener("click", function () {
+  var root = document.documentElement;
+  var next = root.dataset.theme === "dark" ? "light" : "dark";
+  root.dataset.theme = next;
+  localStorage.setItem("nescio-theme", next);
+});
+
+/* ------------------------------------------------------- mobile nav */
+var side = document.getElementById("side");
+document.getElementById("menu-btn").addEventListener("click", function () {
+  side.classList.toggle("open");
+});
+side.addEventListener("click", function (e) {
+  if (e.target.tagName === "A") side.classList.remove("open");
+});
+
+/* ------------------------------------------------------------- tabs */
+document.querySelectorAll(".tabs").forEach(function (group) {
+  var tabs = group.querySelectorAll('[role="tab"]');
+  var panels = group.querySelectorAll('[role="tabpanel"]');
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener("click", function () { select(i); });
+    tab.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowRight") select((i + 1) % tabs.length, true);
+      if (e.key === "ArrowLeft") select((i - 1 + tabs.length) % tabs.length, true);
+    });
+  });
+  function select(i, focus) {
+    tabs.forEach(function (t, j) { t.setAttribute("aria-selected", i === j ? "true" : "false"); });
+    panels.forEach(function (p, j) { p.hidden = i !== j; });
+    if (focus) tabs[i].focus();
+  }
+});
+
+/* ------------------------------------------------------ copy buttons */
+document.querySelectorAll("pre").forEach(function (pre) {
+  var btn = document.createElement("button");
+  btn.className = "copy-btn";
+  btn.textContent = "copy";
+  btn.addEventListener("click", function () {
+    var text = Array.prototype.filter
+      .call(pre.querySelector("code").childNodes, function (n) {
+        return !(n.classList && n.classList.contains("c") && n.textContent[0] !== "$");
+      })
+      .map(function (n) { return n.textContent; })
+      .join("")
+      .replace(/^\$ /gm, "");
+    navigator.clipboard.writeText(text.trim()).then(function () {
+      btn.textContent = "copied";
+      setTimeout(function () { btn.textContent = "copy"; }, 1400);
+    });
+  });
+  pre.appendChild(btn);
+});
+
+/* -------------------------------------------------------- scrollspy */
+var links = {};
+document.querySelectorAll("nav#side a[href^='#']").forEach(function (a) {
+  links[a.getAttribute("href").slice(1)] = a;
+});
+var current = null;
+var observer = new IntersectionObserver(function (entries) {
+  entries.forEach(function (en) {
+    if (en.isIntersecting && links[en.target.id]) {
+      if (current) current.classList.remove("active");
+      current = links[en.target.id];
+      current.classList.add("active");
+    }
+  });
+}, { rootMargin: "-20% 0px -70% 0px" });
+document.querySelectorAll("main section[id]").forEach(function (s) { observer.observe(s); });
+
+/* ------------------------------------------------------- instrument */
+var HERO = [{"d":0,"lo":670,"hi":1110,"map":905,"bits":4.0},{"d":7,"lo":580,"hi":1200,"map":905,"bits":4.18},{"d":14,"lo":520,"hi":1260,"map":905,"bits":4.35},{"d":21,"lo":480,"hi":1300,"map":905,"bits":4.5},{"d":28,"lo":450,"hi":1340,"map":905,"bits":4.65},{"d":35,"lo":420,"hi":1360,"map":905,"bits":4.8},{"d":42,"lo":400,"hi":1380,"map":905,"bits":4.93},{"d":49,"lo":380,"hi":1400,"map":905,"bits":5.06},{"d":56,"lo":370,"hi":1420,"map":905,"bits":5.18},{"d":63,"lo":360,"hi":1430,"map":905,"bits":5.3},{"d":70,"lo":350,"hi":1450,"map":905,"bits":5.41},{"d":77,"lo":340,"hi":1460,"map":905,"bits":5.51},{"d":84,"lo":330,"hi":1470,"map":905,"bits":5.62},{"d":91,"lo":320,"hi":1470,"map":905,"bits":5.71},{"d":98,"lo":310,"hi":1480,"map":905,"bits":5.8},{"d":105,"lo":310,"hi":1490,"map":905,"bits":5.89},{"d":112,"lo":300,"hi":1490,"map":905,"bits":5.97},{"d":119,"lo":290,"hi":1500,"map":905,"bits":6.05},{"d":126,"lo":290,"hi":1510,"map":905,"bits":6.12},{"d":133,"lo":280,"hi":1510,"map":905,"bits":6.19},{"d":140,"lo":280,"hi":1520,"map":905,"bits":6.25},{"d":147,"lo":280,"hi":1520,"map":905,"bits":6.32},{"d":154,"lo":270,"hi":1520,"map":905,"bits":6.37},{"d":161,"lo":270,"hi":1530,"map":905,"bits":6.43},{"d":168,"lo":260,"hi":1530,"map":905,"bits":6.48},{"d":175,"lo":260,"hi":1530,"map":905,"bits":6.53},{"d":182,"lo":260,"hi":1540,"map":905,"bits":6.58},{"d":189,"lo":260,"hi":1540,"map":905,"bits":6.62},{"d":196,"lo":250,"hi":1540,"map":905,"bits":6.66},{"d":203,"lo":250,"hi":1540,"map":905,"bits":6.7},{"d":210,"lo":250,"hi":1550,"map":905,"bits":6.73},{"d":217,"lo":250,"hi":1550,"map":905,"bits":6.77},{"d":224,"lo":240,"hi":1550,"map":905,"bits":6.8},{"d":231,"lo":240,"hi":1550,"map":905,"bits":6.83},{"d":238,"lo":240,"hi":1550,"map":905,"bits":6.85},{"d":245,"lo":240,"hi":1560,"map":905,"bits":6.88},{"d":252,"lo":240,"hi":1560,"map":905,"bits":6.9},{"d":259,"lo":240,"hi":1560,"map":905,"bits":6.93},{"d":266,"lo":230,"hi":1560,"map":905,"bits":6.95},{"d":273,"lo":230,"hi":1560,"map":905,"bits":6.97},{"d":280,"lo":230,"hi":1560,"map":905,"bits":6.98},{"d":287,"lo":230,"hi":1560,"map":905,"bits":7.0},{"d":294,"lo":230,"hi":1570,"map":905,"bits":7.02},{"d":301,"lo":230,"hi":1570,"map":905,"bits":7.03},{"d":308,"lo":230,"hi":1570,"map":905,"bits":7.05},{"d":315,"lo":230,"hi":1570,"map":905,"bits":7.06},{"d":322,"lo":230,"hi":1570,"map":905,"bits":7.07},{"d":329,"lo":220,"hi":1570,"map":905,"bits":7.08},{"d":336,"lo":220,"hi":1570,"map":905,"bits":7.09},{"d":343,"lo":220,"hi":1570,"map":905,"bits":7.1},{"d":350,"lo":220,"hi":1570,"map":905,"bits":7.11},{"d":357,"lo":220,"hi":1570,"map":905,"bits":7.12},{"d":364,"lo":220,"hi":1570,"map":905,"bits":7.12},{"d":371,"lo":580,"hi":1200,"map":795,"bits":4.25},{"d":378,"lo":520,"hi":1260,"map":795,"bits":4.43},{"d":385,"lo":480,"hi":1310,"map":795,"bits":4.59},{"d":392,"lo":450,"hi":1340,"map":795,"bits":4.75},{"d":399,"lo":420,"hi":1360,"map":795,"bits":4.89},{"d":406,"lo":400,"hi":1380,"map":795,"bits":5.03},{"d":413,"lo":380,"hi":1400,"map":795,"bits":5.16},{"d":420,"lo":370,"hi":1420,"map":795,"bits":5.28},{"d":427,"lo":360,"hi":1440,"map":795,"bits":5.4},{"d":434,"lo":350,"hi":1450,"map":795,"bits":5.51},{"d":441,"lo":340,"hi":1460,"map":795,"bits":5.61},{"d":448,"lo":330,"hi":1470,"map":795,"bits":5.71},{"d":455,"lo":320,"hi":1470,"map":795,"bits":5.8},{"d":462,"lo":310,"hi":1480,"map":795,"bits":5.89},{"d":469,"lo":310,"hi":1490,"map":795,"bits":5.97},{"d":476,"lo":300,"hi":1490,"map":795,"bits":6.05},{"d":483,"lo":290,"hi":1500,"map":795,"bits":6.12},{"d":490,"lo":290,"hi":1510,"map":795,"bits":6.19},{"d":497,"lo":280,"hi":1510,"map":795,"bits":6.26},{"d":504,"lo":280,"hi":1520,"map":795,"bits":6.32},{"d":511,"lo":280,"hi":1520,"map":795,"bits":6.38},{"d":518,"lo":270,"hi":1520,"map":795,"bits":6.43},{"d":525,"lo":270,"hi":1530,"map":795,"bits":6.48},{"d":532,"lo":260,"hi":1530,"map":795,"bits":6.53},{"d":539,"lo":260,"hi":1530,"map":795,"bits":6.58},{"d":546,"lo":260,"hi":1540,"map":795,"bits":6.62},{"d":553,"lo":260,"hi":1540,"map":795,"bits":6.66},{"d":560,"lo":250,"hi":1540,"map":795,"bits":6.7},{"d":567,"lo":250,"hi":1540,"map":795,"bits":6.74},{"d":574,"lo":250,"hi":1550,"map":795,"bits":6.77},{"d":581,"lo":250,"hi":1550,"map":795,"bits":6.8},{"d":588,"lo":240,"hi":1550,"map":795,"bits":6.83},{"d":595,"lo":240,"hi":1550,"map":795,"bits":6.86},{"d":602,"lo":240,"hi":1550,"map":795,"bits":6.88},{"d":609,"lo":240,"hi":1560,"map":795,"bits":6.91},{"d":616,"lo":240,"hi":1560,"map":795,"bits":6.93},{"d":623,"lo":240,"hi":1560,"map":795,"bits":6.95},{"d":630,"lo":230,"hi":1560,"map":795,"bits":6.97},{"d":637,"lo":230,"hi":1560,"map":795,"bits":6.99},{"d":644,"lo":230,"hi":1560,"map":795,"bits":7.0},{"d":651,"lo":230,"hi":1560,"map":795,"bits":7.02},{"d":658,"lo":230,"hi":1570,"map":795,"bits":7.03},{"d":665,"lo":230,"hi":1570,"map":795,"bits":7.05},{"d":672,"lo":230,"hi":1570,"map":795,"bits":7.06},{"d":679,"lo":230,"hi":1570,"map":795,"bits":7.07},{"d":686,"lo":230,"hi":1570,"map":795,"bits":7.08},{"d":693,"lo":230,"hi":1570,"map":795,"bits":7.09},{"d":700,"lo":220,"hi":1570,"map":795,"bits":7.1},{"d":707,"lo":220,"hi":1570,"map":795,"bits":7.11},{"d":714,"lo":220,"hi":1570,"map":795,"bits":7.12},{"d":721,"lo":220,"hi":1570,"map":795,"bits":7.13},{"d":728,"lo":220,"hi":1570,"map":795,"bits":7.13}];
+var MAX_BITS = 7.64, DOMAIN = 2000;
+var START = Date.UTC(2026, 5, 25);
+var $ = function (id) { return document.getElementById(id); };
+var slider = $("ins-slider");
+
+function fmtK(v) { return v.toLocaleString("en-US") + "k"; }
+function render(i) {
+  var p = HERO[i];
+  var lo = (p.lo / DOMAIN) * 100, hi = (p.hi / DOMAIN) * 100;
+  $("ins-region").style.left = lo + "%";
+  $("ins-region").style.width = (hi - lo) + "%";
+  $("ins-bl").style.left = lo + "%";
+  $("ins-br").style.left = "calc(" + hi + "% - 9px)";
+  $("ins-dot").style.left = (p.map / DOMAIN) * 100 + "%";
+  $("ins-day").textContent = p.d;
+  $("ins-reg").textContent = fmtK(p.lo) + " – " + fmtK(p.hi);
+  $("ins-bits").textContent = p.bits.toFixed(2) + " / " + MAX_BITS + " bits";
+  var know = Math.round((1 - p.bits / MAX_BITS) * 100);
+  $("ins-know").textContent = know + "%";
+  $("ins-bar").style.width = know + "%";
+  var date = new Date(START + p.d * 86400000);
+  $("ins-date").textContent = date.toISOString().slice(0, 10);
+}
+slider.addEventListener("input", function () { stop(); render(+slider.value); });
+render(0);
+
+var timer = null;
+var playBtn = $("ins-play");
+function stop() {
+  if (timer) { clearInterval(timer); timer = null; playBtn.textContent = "▶ replay"; }
+}
+playBtn.addEventListener("click", function () {
+  if (timer) { stop(); return; }
+  if (+slider.value >= HERO.length - 1) slider.value = 0;
+  playBtn.textContent = "❚❚ pause";
+  timer = setInterval(function () {
+    var next = +slider.value + 1;
+    if (next >= HERO.length) { stop(); return; }
+    slider.value = next;
+    render(next);
+  }, 70);
+});
+</script>
+</body>
+</html>
