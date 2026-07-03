@@ -1,6 +1,6 @@
 [package]
 name = "nescio"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.75"
 description = "nescioDB (Aporia): a database whose primary object is ignorance — evidence with decay, regions with entropy, and queries that plan their own data procurement."
@@ -8,8 +8,10 @@ license = "MIT"
 repository = "https://github.com/PyrraNet/nescioDB"
 keywords = ["database", "uncertainty", "probabilistic", "evidence", "entropy"]
 categories = ["database-implementations"]
-# The language clients live in the repo for humans, not in the crate tarball.
-exclude = ["clients"]
+# Clients, docs site, logo and CI live in the repo for humans (and GitHub
+# Pages), not in the crate tarball. crates.io renders the README's relative
+# image link against the repository, so excluding assets/ loses nothing.
+exclude = ["clients", "docs", "assets", ".github"]
 
 [lib]
 name = "nescio"
