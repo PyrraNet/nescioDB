@@ -27,7 +27,7 @@ import urllib.error as _urlerror
 import urllib.parse as _urlparse
 import urllib.request as _urlrequest
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 __all__ = [
     "NescioClient",
@@ -48,9 +48,11 @@ __all__ = [
     "DecisionPlan",
     "FittedDecay",
     "SlotRemoval",
+    "WatchState",
+    "WatchEvent",
 ]
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
 #: A point in time: unix seconds, an ISO string, or a date/datetime.
 At = Union[int, str, _dt.date, _dt.datetime]
@@ -346,6 +348,45 @@ class FittedDecay:
 class SlotRemoval:
     evidence_erased: int
     priors_removed: int
+    watches_removed: int = 0
+
+
+@dataclass
+class WatchState:
+    """A watch (standing question) evaluated at a point in time.
+
+    Exactly one of ``max_entropy_bits`` / ``min_knowledge`` is the watch's
+    condition. ``horizon`` is the knowledge horizon: when decay alone will
+    trigger the watch (unix seconds, day granularity) — ``None`` when an
+    axiomatic, non-decaying source pins the slot forever. ``error`` is set
+    when evaluation failed (e.g. an axiom conflict), which triggers the
+    watch."""
+
+    name: str
+    entity: str
+    slot: str
+    triggered: bool
+    max_entropy_bits: Optional[float] = None
+    min_knowledge: Optional[float] = None
+    threshold_bits: Optional[float] = None
+    entropy_bits: Optional[float] = None
+    knowledge: Optional[float] = None
+    horizon: Optional[int] = None
+    horizon_date: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class WatchEvent:
+    """One message from the ``/watches/events`` stream.
+
+    ``event`` is "snapshot" (then ``watches`` and ``as_of`` are set) or
+    "triggered" / "recovered" (then ``state`` is set)."""
+
+    event: str
+    watches: List[WatchState] = field(default_factory=list)
+    state: Optional[WatchState] = None
+    as_of: Optional[int] = None
 
 
 # ---------------------------------------------------------------- client
@@ -645,11 +686,13 @@ class NescioClient:
         self._post("/schema/add-slot", {"name": name, "domain": domain})
 
     def remove_slot(self, name: str) -> SlotRemoval:
-        """Remove a slot: physically erases its evidence and priors. Refused
-        (400) while a coupling references the slot."""
+        """Remove a slot: physically erases its evidence, priors and
+        watches. Refused (400) while a coupling references the slot."""
         j = self._post("/schema/remove-slot", {"name": name})
         return SlotRemoval(
-            evidence_erased=j["evidence_erased"], priors_removed=j["priors_removed"]
+            evidence_erased=j["evidence_erased"],
+            priors_removed=j["priors_removed"],
+            watches_removed=j.get("watches_removed", 0),
         )
 
     def add_value(self, slot: str, value: str) -> int:
@@ -665,6 +708,89 @@ class NescioClient:
     def remove_coupling(self, name: str) -> None:
         """Remove a coupling by its label (defaults to "slot_a~slot_b")."""
         self._post("/schema/remove-coupling", {"name": name})
+
+    # ------------------------------------------------------------- watches
+
+    def watches(self, at: Optional[At] = None) -> List[WatchState]:
+        """Every watch with its current state and knowledge horizon."""
+        j = self._get("/watches", at=_at(at))
+        return [_watch_state(w) for w in j["watches"]]
+
+    def add_watch(
+        self,
+        name: str,
+        entity: str,
+        slot: str,
+        max_entropy_bits: Optional[float] = None,
+        min_knowledge: Optional[float] = None,
+    ) -> WatchState:
+        """Register a standing question: fire when the slot decays past a
+        threshold. Pass exactly one of ``max_entropy_bits`` (bits) or
+        ``min_knowledge`` (ratio in (0, 1]). Returns the initial state —
+        including the knowledge horizon, the date decay alone will fire it.
+        """
+        j = self._post(
+            "/watches",
+            _drop_none(
+                name=name,
+                entity=entity,
+                slot=slot,
+                max_entropy_bits=max_entropy_bits,
+                min_knowledge=min_knowledge,
+            ),
+        )
+        return _watch_state(j["state"])
+
+    def remove_watch(self, name: str) -> None:
+        self._post("/watches/remove", {"name": name})
+
+    def check_watches(self, at: Optional[At] = None) -> List[WatchState]:
+        """Evaluate all watches; returns only the triggered ones."""
+        j = self._get("/watches/check", at=_at(at))
+        return [_watch_state(w) for w in j["triggered"]]
+
+    def watch_events(self) -> Iterator[WatchEvent]:
+        """Subscribe to watch transitions (Server-Sent Events).
+
+        Yields a "snapshot" event first, then "triggered" / "recovered"
+        states as they happen. Blocks between events with no timeout —
+        iterate in a dedicated thread, or ``break`` when done::
+
+            for ev in db.watch_events():
+                if ev.event == "triggered":
+                    notify(ev.state)
+        """
+        req = _urlrequest.Request(
+            self.base_url + "/watches/events",
+            headers={"Accept": "text/event-stream", **self.headers},
+        )
+        try:
+            res = _urlrequest.urlopen(req)  # no timeout: the stream lives on
+        except _urlerror.URLError as e:
+            raise NescioError(
+                0, f"request to {self.base_url}/watches/events failed: {e.reason}"
+            ) from None
+        with res:
+            event, data = "", []
+            for raw in res:
+                line = raw.decode("utf-8").rstrip("\r\n")
+                if line.startswith("event:"):
+                    event = line[6:].strip()
+                elif line.startswith("data:"):
+                    data.append(line[5:].strip())
+                elif not line and data:  # blank line ends the frame
+                    j = _json.loads("".join(data))
+                    if event == "snapshot":
+                        yield WatchEvent(
+                            event=event,
+                            as_of=j.get("as_of"),
+                            watches=[_watch_state(w) for w in j.get("watches", [])],
+                        )
+                    elif event in ("triggered", "recovered"):
+                        yield WatchEvent(event=event, state=_watch_state(j))
+                    event, data = "", []
+                elif not line:
+                    event = ""  # comment/ping frame
 
     # ------------------------------------------------------------ plumbing
 
@@ -724,3 +850,20 @@ class Entity:
 
 def _drop_none(**kw: Any) -> Json:
     return {k: v for k, v in kw.items() if v is not None}
+
+
+def _watch_state(j: Json) -> WatchState:
+    return WatchState(
+        name=j["name"],
+        entity=j["entity"],
+        slot=j["slot"],
+        triggered=j["triggered"],
+        max_entropy_bits=j.get("max_entropy_bits"),
+        min_knowledge=j.get("min_knowledge"),
+        threshold_bits=j.get("threshold_bits"),
+        entropy_bits=j.get("entropy_bits"),
+        knowledge=j.get("knowledge"),
+        horizon=j.get("horizon"),
+        horizon_date=j.get("horizon_date"),
+        error=j.get("error"),
+    )

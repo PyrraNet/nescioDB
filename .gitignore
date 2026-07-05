@@ -8,3 +8,4 @@ clients/typescript/package-lock.json
 clients/java/out
 clients/java/target
 .DS_Store
+__pycache__/

@@ -7,6 +7,7 @@
 //!                  remove_slot)
 //!   sources.json   source registry: reliability, half-life, axiomatic
 //!   priors.json    shared priors: registry + per-entity assignments
+//!   watches.json   standing questions with knowledge horizons (optional)
 //!   log.bin        append-only evidence log, compact binary (see binlog)
 //! ```
 //!
@@ -37,10 +38,12 @@ use crate::error::{Error, Result};
 use crate::model::coupling::Coupling;
 use crate::model::domain::Domain;
 use crate::model::evidence::{Evidence, EvidenceRecord, Source};
+use crate::watch::Watch;
 
 pub const SCHEMA_FILE: &str = "schema.json";
 pub const SOURCES_FILE: &str = "sources.json";
 pub const PRIORS_FILE: &str = "priors.json";
+pub const WATCHES_FILE: &str = "watches.json";
 /// Legacy human-readable log. New databases use [`LOG_BIN`]; a database
 /// that still has only this is migrated on open.
 pub const LOG_FILE: &str = "log.jsonl";
@@ -79,6 +82,8 @@ pub struct SlotRemoval {
     pub evidence_erased: usize,
     /// Priors (registry entries and slot defaults) removed with the slot.
     pub priors_removed: usize,
+    /// Watches on the slot, removed with it.
+    pub watches_removed: usize,
 }
 
 pub struct Db {
@@ -86,6 +91,7 @@ pub struct Db {
     pub schema: Schema,
     pub sources: BTreeMap<String, Source>,
     pub priors: Priors,
+    pub watches: Vec<Watch>,
     pub evidence: Vec<Evidence>,
     pub(crate) index: HashMap<(String, String), Vec<usize>>,
     pub(crate) entities: BTreeSet<String>,
@@ -100,7 +106,14 @@ impl Db {
     // ------------------------------------------------------------- lifecycle
 
     pub fn in_memory(schema: Schema, sources: Vec<Source>) -> Result<Self> {
-        Self::build(None, schema, sources, Priors::default(), Vec::new())
+        Self::build(
+            None,
+            schema,
+            sources,
+            Priors::default(),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 
     pub fn init(dir: &Path, schema: Schema, sources: Vec<Source>) -> Result<Self> {
@@ -117,6 +130,7 @@ impl Db {
             sources,
             Priors::default(),
             Vec::new(),
+            Vec::new(),
         )?;
         db.persist_schema()?;
         db.persist_sources()?;
@@ -132,6 +146,11 @@ impl Db {
             read_json(&dir.join(PRIORS_FILE))?
         } else {
             Priors::default()
+        };
+        let watches: Vec<Watch> = if dir.join(WATCHES_FILE).exists() {
+            read_json(&dir.join(WATCHES_FILE))?
+        } else {
+            Vec::new()
         };
         let bin_path = dir.join(LOG_BIN);
         let jsonl_path = dir.join(LOG_FILE);
@@ -157,6 +176,7 @@ impl Db {
             schema,
             sources.into_values().collect(),
             priors,
+            watches,
             records,
         )?;
         if migrate_legacy {
@@ -171,6 +191,7 @@ impl Db {
         schema: Schema,
         sources: Vec<Source>,
         priors: Priors,
+        watches: Vec<Watch>,
         records: Vec<EvidenceRecord>,
     ) -> Result<Self> {
         for (slot, d) in &schema.slots {
@@ -187,6 +208,7 @@ impl Db {
             schema,
             sources: source_map,
             priors: Priors::default(),
+            watches: Vec::new(),
             evidence: Vec::new(),
             index: HashMap::new(),
             entities: BTreeSet::new(),
@@ -195,6 +217,10 @@ impl Db {
             loopy,
         };
         db.set_priors_checked(priors)?;
+        for w in watches {
+            db.check_new_watch(&w)?;
+            db.watches.push(w);
+        }
         for rec in records {
             let ev = db.resolve_record(rec)?;
             db.push_evidence(ev);
@@ -332,6 +358,44 @@ impl Db {
         self.priors.defaults.get(slot).map(|w| w.as_slice())
     }
 
+    // -------------------------------------------------------------- watches
+
+    /// Register a standing question (see [`crate::watch`]). The watch is
+    /// persisted with the database and evaluated by `nescio watch`, the
+    /// `/watches` routes and the server's background evaluator.
+    pub fn add_watch(&mut self, w: Watch) -> Result<()> {
+        self.check_new_watch(&w)?;
+        self.watches.push(w);
+        self.persist_watches()
+    }
+
+    pub fn remove_watch(&mut self, name: &str) -> Result<()> {
+        let idx = self
+            .watches
+            .iter()
+            .position(|w| w.name == name)
+            .ok_or_else(|| Error::Invalid(format!("no watch named {name:?}")))?;
+        self.watches.remove(idx);
+        self.persist_watches()
+    }
+
+    fn check_new_watch(&self, w: &Watch) -> Result<()> {
+        w.validate()?;
+        self.domain(&w.slot).map_err(|_| {
+            Error::Invalid(format!(
+                "watch {:?} references unknown slot {:?}",
+                w.name, w.slot
+            ))
+        })?;
+        if self.watches.iter().any(|x| x.name == w.name) {
+            return Err(Error::Invalid(format!(
+                "a watch named {:?} already exists",
+                w.name
+            )));
+        }
+        Ok(())
+    }
+
     // ----------------------------------------------------- schema evolution
 
     /// Add a slot to a live database. No backfill is needed: ignorance is
@@ -348,8 +412,9 @@ impl Db {
 
     /// Remove a slot together with everything that only has meaning through
     /// it: its evidence (physically, with a log rewrite — a record on an
-    /// unknown slot would fail replay) and its priors. Couplings are
-    /// cross-slot and are never removed implicitly: drop them first.
+    /// unknown slot would fail replay), its priors and its watches.
+    /// Couplings are cross-slot and are never removed implicitly: drop
+    /// them first.
     pub fn remove_slot(&mut self, name: &str) -> Result<SlotRemoval> {
         self.domain(name)?;
         if let Some(c) = self
@@ -385,6 +450,9 @@ impl Db {
             slots.remove(name);
         }
         self.priors.assignments.retain(|_, m| !m.is_empty());
+        let watches_before = self.watches.len();
+        self.watches.retain(|w| w.slot != name);
+        let watches_removed = watches_before - self.watches.len();
         self.schema.slots.remove(name);
         self.rebuild_index();
         if evidence_erased > 0 {
@@ -392,9 +460,13 @@ impl Db {
         }
         self.persist_schema()?;
         self.persist_priors()?;
+        if watches_removed > 0 {
+            self.persist_watches()?;
+        }
         Ok(SlotRemoval {
             evidence_erased,
             priors_removed,
+            watches_removed,
         })
     }
 
@@ -620,6 +692,10 @@ impl Db {
 
     fn persist_priors(&self) -> Result<()> {
         self.persist(PRIORS_FILE, &self.priors)
+    }
+
+    fn persist_watches(&self) -> Result<()> {
+        self.persist(WATCHES_FILE, &self.watches)
     }
 
     fn persist<T: Serialize>(&self, file: &str, value: &T) -> Result<()> {

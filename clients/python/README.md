@@ -38,6 +38,14 @@ print(plan.validated_entropy_bits)   # the number to trust
 # Entity handles for entity-centric code:
 villa = db.entity("villa_1")
 villa.certainly("price", lt=1_500_000)   # "true" | "possible" | "false"
+
+# Watches: fire when knowledge decays past a threshold. The horizon —
+# the date decay alone will fire it — is predicted on registration.
+st = db.add_watch("price_fresh", "villa_1", "price", max_entropy_bits=5.0)
+print(st.horizon_date)                   # "2026-08-10"
+for ev in db.watch_events():             # SSE: snapshot, then transitions
+    if ev.event == "triggered":
+        notify(ev.state)
 ```
 
 ## API
@@ -54,6 +62,9 @@ Every method mirrors a server verb and returns typed dataclasses:
 - `ingest` / `ingest_batch` / `put_source` / `forget_source` / `recalibrate`
 - `register_prior` / `use_prior`, plus `health()` and `status()`
 - schema evolution: `add_slot`, `remove_slot`, `add_value`, `add_coupling`, `remove_coupling`
+- watches: `add_watch`, `remove_watch`, `watches()`, `check_watches()` → `WatchState`
+  (with `horizon` / `horizon_date`), and `watch_events()` — a generator over the
+  Server-Sent-Events stream (`WatchEvent`: snapshot, triggered, recovered)
 - `entity(id)` → a handle with the entity bound: `db.entity("v1").bound("price")`
 
 Constructors for the wire formats: `claim.interval/value/not_value`,

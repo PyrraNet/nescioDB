@@ -279,7 +279,7 @@ noscript ~ * .tabpanel[hidden] { display: block; }
   </a>
   <span class="spacer"></span>
   <div class="header-links">
-    <span class="pill">v0.7.1</span>
+    <span class="pill">v0.8.0</span>
     <a href="https://github.com/PyrraNet/nescioDB">GitHub</a>
     <a href="https://crates.io/crates/nescio">crates.io</a>
     <a href="https://docs.rs/nescio">docs.rs</a>
@@ -301,6 +301,7 @@ noscript ~ * .tabpanel[hidden] { display: block; }
   <a href="#axioms">Axioms &amp; conflict</a>
   <a href="#priors">Priors</a>
   <a href="#schema-evolution">Schema evolution</a>
+  <a href="#watches">Watches &amp; horizons</a>
   <a href="#forgetting">Forgetting</a>
   <div class="group-label">the verbs</div>
   <a href="#bound"><code>bound</code></a>
@@ -390,7 +391,7 @@ noscript ~ * .tabpanel[hidden] { display: block; }
 <!-- ================================================================ TOUR -->
 <section id="tour">
   <h2><span class="group-label">start</span>Five-minute tour</h2>
-  <p>Every output below is the actual output of nescio v0.7.1 — copy the commands and
+  <p>Every output below is the actual output of nescio v0.8.0 — copy the commands and
   you will get the same numbers.</p>
 
   <h3>1 · Create a database</h3>
@@ -610,6 +611,57 @@ HTTP 409</span></code></pre>
   <p>The same operations over HTTP: <code>POST /schema/add-slot</code>,
   <code>/schema/add-value</code>, <code>/schema/add-coupling</code>,
   <code>/schema/remove-coupling</code>, <code>/schema/remove-slot</code>.</p>
+</section>
+
+<!-- ============================================================== WATCHES -->
+<section id="watches">
+  <h2><span class="group-label">concepts</span>Watches &amp; knowledge horizons</h2>
+  <p>Decay is deterministic physics — which means <em>"when will the database stop
+  knowing enough?"</em> has a computable answer. A <strong>watch</strong> is a standing
+  question: name an entity's slot and a threshold, and nescio answers with the
+  <strong>knowledge horizon</strong> — the exact date on which decay alone will push the
+  slot past the threshold — the moment you register it:</p>
+  <pre><code><span class="c">$</span> nescio watch add mydb --name price_fresh --entity villa_1 --slot price --max-entropy 5.0
+<span class="c">watch "price_fresh" added
+  ok        price_fresh      villa_1.price  4.25 bits (threshold 5.00)  fires ~2026-08-10 without new evidence</span>
+
+<span class="c">$</span> nescio watch add mydb --name sell_known --entity villa_1 --slot wants_to_sell --min-knowledge 0.3
+<span class="c">watch "sell_known" added
+  TRIGGERED sell_known       villa_1.wants_to_sell  1.00 bits (threshold 0.70)</span>
+
+<span class="c">$</span> nescio watch check mydb --at 2026-09-01   <span class="k">← exits 2 when anything fired: cron-ready</span>
+<span class="c">  TRIGGERED price_fresh      villa_1.price  5.38 bits (threshold 5.00)
+  TRIGGERED sell_known       villa_1.wants_to_sell  1.00 bits (threshold 0.70)</span></code></pre>
+  <ul>
+    <li><strong>Two ways to say the same thing</strong> — <code>--max-entropy BITS</code>
+    (absolute) or <code>--min-knowledge RATIO</code> (relative to the slot's maximal
+    entropy). Exactly one per watch.</li>
+    <li><strong>The horizon is a prediction, not a poll</strong> — no horizon exists when
+    an axiomatic, non-decaying source pins the slot forever; new evidence moves it.</li>
+    <li><strong>Conflict fires the watch</strong> — a standing question that cannot be
+    answered (axiom conflict on the slot) is treated as triggered, with the error
+    attached. Contradiction must surface.</li>
+    <li><strong>Cron-friendly</strong> — <code>nescio watch check</code> exits 0 when all
+    is quiet, 2 when something fired; <code>--json</code> for machines.</li>
+  </ul>
+  <p>Under <code>nescio serve</code>, a background evaluator re-checks the watches after
+  every write and pushes transitions as <strong>Server-Sent Events</strong> — decay
+  becomes a signal you subscribe to instead of a report you remember to ask for:</p>
+  <pre><code><span class="c">$</span> curl -N localhost:7777/watches/events
+<span class="c">event: snapshot
+data: {"as_of":1783281478,"watches":[{"name":"price_fresh","entity":"villa_1","slot":"price",
+       "max_entropy_bits":5.0,"triggered":false,"entropy_bits":4.25,"threshold_bits":5.0,
+       "knowledge":0.44,"horizon":1786305478,"horizon_date":"2026-08-10"}]}
+
+event: triggered                                <span class="k">← ~40 days later, no new evidence</span>
+data: {"name":"price_fresh","entity":"villa_1","slot":"price","triggered":true, …}
+
+event: recovered                                <span class="k">← fresh evidence arrived</span>
+data: {"name":"price_fresh","entity":"villa_1","slot":"price","triggered":false, …}</span></code></pre>
+  <p>The matching HTTP routes: <code>GET /watches</code> (every watch with state and
+  horizon), <code>GET /watches/check</code> (only the triggered ones),
+  <code>POST /watches</code> / <code>POST /watches/remove</code>. Watches live in
+  <code>watches.json</code> next to the schema (<a href="#formats">format</a>).</p>
 </section>
 
 <!-- =========================================================== FORGETTING -->
@@ -934,6 +986,11 @@ villa_3</code></pre>
     <tr><td><code>POST /schema/add-value</code></td><td><code>{slot, value}</code> — categorical slots</td></tr>
     <tr><td><code>POST /schema/add-coupling</code></td><td><code>{slot_a, slot_b, compat, name?}</code></td></tr>
     <tr><td><code>POST /schema/remove-coupling</code></td><td><code>{name}</code> — by label</td></tr>
+    <tr><td><code>GET /watches</code></td><td><code>[at]</code> — every watch with state + knowledge horizon</td></tr>
+    <tr><td><code>GET /watches/check</code></td><td><code>[at]</code> — only the triggered ones</td></tr>
+    <tr><td><code>GET /watches/events</code></td><td>Server-Sent Events: <code>snapshot</code>, then <code>triggered</code> / <code>recovered</code></td></tr>
+    <tr><td><code>POST /watches</code></td><td><code>{name, entity, slot, max_entropy_bits?&thinsp;|&thinsp;min_knowledge?}</code> — returns the initial state incl. horizon</td></tr>
+    <tr><td><code>POST /watches/remove</code></td><td><code>{name}</code></td></tr>
   </table></div>
   <p><code>at</code> accepts <code>"YYYY-MM-DD"</code>, a date-time, or unix seconds —
   in query strings and JSON bodies alike; it defaults to now. Status codes:</p>
@@ -971,6 +1028,7 @@ villa_3</code></pre>
     <tr><td><code>decide</code></td><td>plan evidence against an <code>--objective</code>, target in its risk units</td></tr>
     <tr><td><code>prior register / use</code></td><td>shared priors (<code>--gaussian CENTER,SIGMA</code> or <code>--weights-file</code>)</td></tr>
     <tr><td><code>schema add-slot / remove-slot / add-value / add-coupling / remove-coupling</code></td><td>evolve a live database — see <a href="#schema-evolution">schema evolution</a></td></tr>
+    <tr><td><code>watch add / rm / list / check</code></td><td>standing questions with knowledge horizons — <code>check</code> exits 2 when triggered (<a href="#watches">watches</a>)</td></tr>
     <tr><td><code>forget-source</code></td><td>GDPR erasure; all derived regions widen</td></tr>
     <tr><td><code>recalibrate</code></td><td>learn a source's r0 / half-life from ground truth (<code>--apply</code>)</td></tr>
     <tr><td><code>import / export</code></td><td>JSONL in (one group commit) / JSONL out — dates or unix seconds, see <a href="#formats">formats</a></td></tr>
@@ -1109,6 +1167,18 @@ villa_3</code></pre>
   <p>Weights are relative (they are normalized), must be finite and ≥ 0, not all zero,
   and their length must equal the slot's cell count (<code>n_bins</code> or the number
   of categorical values).</p>
+
+  <h3>watches.json</h3>
+  <p>Standing questions (<a href="#watches">watches</a>), written by
+  <code>nescio watch add</code> / <code>POST /watches</code> — you rarely edit this by
+  hand, but it is plain JSON like everything else:</p>
+  <pre><code>[
+  {"name": "price_fresh", "entity": "villa_1", "slot": "price", "max_entropy_bits": 5.0},
+  {"name": "sell_known",  "entity": "villa_1", "slot": "wants_to_sell", "min_knowledge": 0.3}
+]</code></pre>
+  <p>Exactly one of <code>max_entropy_bits</code> (bits) / <code>min_knowledge</code>
+  (ratio in (0, 1]) per watch; names are unique, the slot must exist. The file is
+  optional — no watches, no file.</p>
 </section>
 
 <!-- ============================================================= CLIENTS -->
@@ -1146,7 +1216,14 @@ plan = villa.decide("price", objective=objective.absolute_error(), target=10_000
     actions=[action("pull the land registry", "price", cost=40,
                     src=source("land_registry", 1.0, axiomatic=True),
                     answer_width=20_000)])
-print(plan.recommended_now, "->", plan.validated_risk)</code></pre>
+print(plan.recommended_now, "->", plan.validated_risk)
+
+<span class="c"># Watches: fire when knowledge decays past a threshold</span>
+st = db.add_watch("price_fresh", "villa_1", "price", max_entropy_bits=5.0)
+print(st.horizon_date)                   <span class="c"># the knowledge horizon: "2026-08-10"</span>
+for ev in db.watch_events():             <span class="c"># SSE: snapshot, then transitions</span>
+    if ev.event == "triggered":
+        notify(ev.state)</code></pre>
     </div>
     <div class="tabpanel" role="tabpanel" hidden>
 <pre><code><span class="c">// npm install nesciodb   (Node 18+ or any modern browser — or vendor the one file)</span>
@@ -1176,7 +1253,15 @@ const plan = await villa.decide({
     answerWidth: 20_000,
   }],
 });
-console.log(plan.recommendedNow, "->", plan.validatedRisk);</code></pre>
+console.log(plan.recommendedNow, "->", plan.validatedRisk);
+
+<span class="c">// Watches: fire when knowledge decays past a threshold</span>
+const st = await db.addWatch({ name: "price_fresh", entity: "villa_1",
+                               slot: "price", maxEntropyBits: 5.0 });
+console.log(st.horizonDate);             <span class="c">// the knowledge horizon: "2026-08-10"</span>
+for await (const ev of db.watchEvents()) {  <span class="c">// SSE: snapshot, then transitions</span>
+  if (ev.event === "triggered") notify(ev.state);
+}</code></pre>
     </div>
     <div class="tabpanel" role="tabpanel" hidden>
 <pre><code><span class="c">// JDK 17+; drop the three files into your project, or mvn package</span>
@@ -1198,13 +1283,13 @@ System.out.printf("%.2f bits, knowledge %.0f%%%n",
     <tr><th>client</th><th>verbs</th><th>times (<code>at</code>)</th><th>errors</th></tr>
     <tr>
       <td><a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/python">Python</a></td>
-      <td>all — incl. <code>decide</code>, schema evolution, batch ingest, priors, recalibrate</td>
+      <td>all — incl. <code>decide</code>, schema evolution, watches + SSE stream, batch ingest, priors, recalibrate</td>
       <td>ISO string, unix seconds, <code>date</code>, <code>datetime</code></td>
       <td><code>NescioError</code> with <code>.status</code></td>
     </tr>
     <tr>
       <td><a href="https://github.com/PyrraNet/nescioDB/tree/main/clients/typescript">TypeScript</a></td>
-      <td>all — incl. <code>decide</code>, schema evolution, batch ingest, priors, recalibrate</td>
+      <td>all — incl. <code>decide</code>, schema evolution, watches + SSE stream, batch ingest, priors, recalibrate</td>
       <td>ISO string, unix seconds, <code>Date</code></td>
       <td><code>NescioError</code> with <code>.status</code></td>
     </tr>
@@ -1230,6 +1315,7 @@ System.out.printf("%.2f bits, knowledge %.0f%%%n",
   schema.json     slots and couplings
   sources.json    reliability, half-life, axiomatic
   priors.json     shared priors
+  watches.json    standing questions (only if you add some)
   log.bin         the evidence log (append-only binary)</code></pre>
   <p>The binary log is never the only copy of the truth you can read —
   <code>export</code> reconstructs JSONL any time, and <code>import</code> goes the

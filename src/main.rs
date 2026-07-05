@@ -231,6 +231,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: SchemaCmd,
     },
+    /// Standing questions: be told when knowledge decays past a threshold
+    Watch {
+        #[command(subcommand)]
+        cmd: WatchCmd,
+    },
     /// GDPR erasure: physically remove all evidence from a source
     ForgetSource {
         dir: PathBuf,
@@ -337,6 +342,52 @@ enum SchemaCmd {
         dir: PathBuf,
         #[arg(long)]
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WatchCmd {
+    /// Add a watch; prints its knowledge horizon immediately
+    Add {
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        entity: String,
+        #[arg(long)]
+        slot: String,
+        /// Fire when entropy exceeds this many bits
+        #[arg(long)]
+        max_entropy: Option<f64>,
+        /// Fire when knowledge (1 - entropy/max) drops below this ratio (0..1)
+        #[arg(long)]
+        min_knowledge: Option<f64>,
+        /// Evaluate the confirmation as of this time (default now)
+        #[arg(long)]
+        at: Option<String>,
+    },
+    /// Remove a watch by name
+    Rm {
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+    },
+    /// Every watch with its current state and knowledge horizon
+    List {
+        dir: PathBuf,
+        #[arg(long)]
+        at: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate all watches; exits with code 2 if any is triggered
+    /// (cron-friendly: 0 quiet, 1 error, 2 triggered)
+    Check {
+        dir: PathBuf,
+        #[arg(long)]
+        at: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -476,6 +527,14 @@ fn run(cli: Cli) -> Result<()> {
                     .map_or("no decay".to_string(), |d| format!("half-life {d}d"));
                 let ax = if s.axiomatic { ", axiomatic" } else { "" };
                 println!("  source {}: r0={}, {hl}{ax}", s.name, s.reliability);
+            }
+            for w in &db.watches {
+                let cond = match (w.max_entropy_bits, w.min_knowledge) {
+                    (Some(b), _) => format!("fires above {b} bits"),
+                    (_, Some(k)) => format!("fires below {:.0}% knowledge", k * 100.0),
+                    _ => String::new(),
+                };
+                println!("  watch {}: {}.{}, {cond}", w.name, w.entity, w.slot);
             }
             Ok(())
         }
@@ -878,8 +937,8 @@ fn run(cli: Cli) -> Result<()> {
                 let mut db = Db::open(&dir)?;
                 let r = db.remove_slot(&name)?;
                 println!(
-                    "removed slot {name:?}: physically erased {} evidence records, removed {} priors",
-                    r.evidence_erased, r.priors_removed
+                    "removed slot {name:?}: physically erased {} evidence records, removed {} priors, {} watches",
+                    r.evidence_erased, r.priors_removed, r.watches_removed
                 );
                 Ok(())
             }
@@ -906,6 +965,87 @@ fn run(cli: Cli) -> Result<()> {
                 let mut db = Db::open(&dir)?;
                 db.remove_coupling(&name)?;
                 println!("coupling {name} removed; the affected slots decouple");
+                Ok(())
+            }
+        },
+        Cmd::Watch { cmd } => match cmd {
+            WatchCmd::Add {
+                dir,
+                name,
+                entity,
+                slot,
+                max_entropy,
+                min_knowledge,
+                at,
+            } => {
+                let mut db = Db::open(&dir)?;
+                let w = Watch {
+                    name,
+                    entity,
+                    slot,
+                    max_entropy_bits: max_entropy,
+                    min_knowledge,
+                };
+                db.add_watch(w.clone())?;
+                let st = evaluate_watch(&db, &w, when_or_now(&at)?, DEFAULT_HORIZON_DAYS);
+                println!("watch {:?} added", w.name);
+                println!("{}", fmt_watch_state(&st));
+                Ok(())
+            }
+            WatchCmd::Rm { dir, name } => {
+                let mut db = Db::open(&dir)?;
+                db.remove_watch(&name)?;
+                println!("watch {name:?} removed");
+                Ok(())
+            }
+            WatchCmd::List { dir, at, json } => {
+                let db = Db::open(&dir)?;
+                let at = when_or_now(&at)?;
+                let states = check_watches(&db, at, DEFAULT_HORIZON_DAYS);
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&states).map_err(Error::Json)?
+                    );
+                } else if states.is_empty() {
+                    println!("(no watches — add one with `nescio watch add`)");
+                } else {
+                    println!("WATCHES as of {}", format_unix(at));
+                    for s in &states {
+                        println!("{}", fmt_watch_state(s));
+                    }
+                }
+                Ok(())
+            }
+            WatchCmd::Check { dir, at, json } => {
+                let db = Db::open(&dir)?;
+                let at = when_or_now(&at)?;
+                let states = check_watches(&db, at, DEFAULT_HORIZON_DAYS);
+                let triggered: Vec<_> = states.iter().filter(|s| s.triggered).collect();
+                if json {
+                    let out = serde_json::json!({
+                        "as_of": at,
+                        "checked": states.len(),
+                        "triggered": triggered,
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&out).map_err(Error::Json)?
+                    );
+                } else if triggered.is_empty() {
+                    println!(
+                        "all quiet: {} watches checked as of {}",
+                        states.len(),
+                        format_unix(at)
+                    );
+                } else {
+                    for s in &triggered {
+                        println!("{}", fmt_watch_state(s));
+                    }
+                }
+                if !triggered.is_empty() {
+                    std::process::exit(2);
+                }
                 Ok(())
             }
         },
@@ -1077,6 +1217,28 @@ fn read_json_file<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T> {
     let data = std::fs::read_to_string(path)
         .map_err(|e| Error::Invalid(format!("cannot read {}: {e}", path.display())))?;
     serde_json::from_str(&data).map_err(|e| Error::Invalid(format!("{}: {e}", path.display())))
+}
+
+/// One line per watch: state, name, target, entropy vs threshold, horizon.
+fn fmt_watch_state(s: &WatchState) -> String {
+    let flag = if s.triggered { "TRIGGERED" } else { "ok" };
+    let mut line = format!(
+        "  {:<9} {:<16} {}.{}",
+        flag, s.watch.name, s.watch.entity, s.watch.slot
+    );
+    if let (Some(e), Some(t)) = (s.entropy_bits, s.threshold_bits) {
+        line.push_str(&format!("  {e:.2} bits (threshold {t:.2})"));
+    }
+    if let Some(err) = &s.error {
+        line.push_str(&format!("  [{err}]"));
+    }
+    if !s.triggered {
+        match &s.horizon_date {
+            Some(d) => line.push_str(&format!("  fires ~{d} without new evidence")),
+            None => line.push_str("  stable beyond the horizon"),
+        }
+    }
+    line
 }
 
 fn fmt_region(r: &Region) -> String {

@@ -1,6 +1,6 @@
 [package]
 name = "nescio"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.75"
 description = "nescioDB (Aporia): a database whose primary object is ignorance — evidence with decay, regions with entropy, and queries that plan their own data procurement."

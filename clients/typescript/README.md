@@ -41,6 +41,15 @@ const plan = await villa.decide({
   }],
 });
 console.log(plan.recommendedNow, "->", plan.recommendedAfter, plan.validatedRisk);
+
+// Watches: fire when knowledge decays past a threshold. The horizon —
+// the date decay alone will fire it — is predicted on registration.
+const st = await db.addWatch({ name: "price_fresh", entity: "villa_1",
+                               slot: "price", maxEntropyBits: 5.0 });
+console.log(st.horizonDate);                // "2026-08-10"
+for await (const ev of db.watchEvents()) {  // SSE: snapshot, then transitions
+  if (ev.event === "triggered") notify(ev.state);
+}
 ```
 
 ## API
@@ -57,6 +66,9 @@ Every method mirrors a server verb and returns idiomatic camelCase types.
 - `ingest` / `ingestBatch` / `putSource` / `forgetSource` / `recalibrate`
 - `registerPrior` / `usePrior`, plus `health()` and `status()`
 - schema evolution: `addSlot`, `removeSlot`, `addValue`, `addCoupling`, `removeCoupling`
+- watches: `addWatch`, `removeWatch`, `watches()`, `checkWatches()` → `WatchState`
+  (with `horizon` / `horizonDate`), and `watchEvents({ signal? })` — an async
+  iterator over the Server-Sent-Events stream (snapshot, triggered, recovered)
 - `entity(id)` → an `EntityHandle` with the entity bound: `db.entity("v1").bound("price")`
 
 Builders for the wire formats: `claim.interval/value/notValue`,

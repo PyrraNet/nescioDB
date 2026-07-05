@@ -60,6 +60,7 @@ pub mod rng;
 pub mod server;
 pub mod store;
 pub mod time;
+pub mod watch;
 
 pub mod prelude {
     pub use crate::calibrate::{calibration_pairs, fit_decay, FittedDecay};
@@ -73,4 +74,7 @@ pub mod prelude {
     pub use crate::model::domain::Domain;
     pub use crate::model::evidence::{Claim, Evidence, EvidenceRecord, Source};
     pub use crate::store::{Db, PriorDef, Priors, Schema, SlotRemoval};
+    pub use crate::watch::{
+        check_watches, evaluate_watch, Watch, WatchState, DEFAULT_HORIZON_DAYS,
+    };
 }

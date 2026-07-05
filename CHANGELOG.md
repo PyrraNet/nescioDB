@@ -5,9 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] — 2026-07-05
 
 ### Added
+- **Watches & knowledge horizons.** A watch is a standing question — "fire
+  when the entropy of `villa_1.price` exceeds 5 bits" (or `min_knowledge`
+  as the relative form). Because decay is deterministic, every watch
+  reports its **knowledge horizon**: the exact date decay alone will fire
+  it, predicted the moment you register it. `nescio watch add | rm | list
+  | check` (`check` exits 2 when triggered — cron-ready), routes
+  `GET /watches`, `GET /watches/check`, `POST /watches`,
+  `POST /watches/remove`, and `GET /watches/events` — a Server-Sent-Events
+  stream fed by a background evaluator that re-checks after every write
+  (`snapshot`, then `triggered` / `recovered` transitions). A watch also
+  fires on axiom conflict; `schema remove-slot` cascades watches on the
+  removed slot; watches persist in `watches.json`. Both clients cover it,
+  including the stream (`db.watch_events()` generator in Python,
+  `db.watchEvents()` async iterator in TypeScript).
 - **Python client** (`clients/python`, package `nesciodb`): zero-dependency
   (urllib, 3.9+), fully typed, covers every verb including `decide` and
   schema evolution. Dataclass results, `datetime`-aware `at=`, entity
@@ -77,6 +91,7 @@ Initial public release.
 - Zero-dependency typed clients for TypeScript and Java.
 - Examples: `realestate` (end-to-end walkthrough) and `bench`.
 
+[0.8.0]: https://github.com/PyrraNet/nescioDB/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/PyrraNet/nescioDB/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/PyrraNet/nescioDB/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PyrraNet/nescioDB/compare/v0.5.0...v0.6.0

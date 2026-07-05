@@ -28,6 +28,12 @@
 //! POST /schema/add-value       {slot, value}
 //! POST /schema/add-coupling    {slot_a, slot_b, compat, name?}
 //! POST /schema/remove-coupling {name}
+//! GET  /watches[?at=]          every watch: state + knowledge horizon
+//! GET  /watches/check[?at=]    only the triggered ones
+//! GET  /watches/events         Server-Sent Events: snapshot, then
+//!                              triggered / recovered transitions
+//! POST /watches         {name, entity, slot, max_entropy_bits?|min_knowledge?}
+//! POST /watches/remove  {name}
 //! ```
 //!
 //! `at` accepts "YYYY-MM-DD", a date-time, or unix seconds; default now.
@@ -35,6 +41,9 @@
 //! server failure.
 
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -48,8 +57,16 @@ use crate::model::domain::Domain;
 use crate::model::evidence::{Claim, EvidenceRecord, Source};
 use crate::store::Db;
 use crate::time::{now_unix, parse_when};
+use crate::watch::{check_watches, evaluate_watch, Watch, WatchState, DEFAULT_HORIZON_DAYS};
 
 const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+/// The watch evaluator re-checks at least this often; it is also woken by
+/// every write. Doubles as the SSE ping cadence.
+const HEARTBEAT_SECS: u64 = 15;
+
+/// Live `/watches/events` connections, each fed by cloned frame strings.
+type Subscribers = Arc<Mutex<Vec<mpsc::Sender<String>>>>;
 
 pub struct NescioServer {
     inner: tiny_http::Server,
@@ -74,9 +91,20 @@ impl NescioServer {
     /// read-only POST /resolve) run concurrently under a read lock;
     /// mutations take the write lock exclusively — many readers, one
     /// writer, single process owning the directory.
+    ///
+    /// A background evaluator re-checks the watches after every write and
+    /// at least every `HEARTBEAT_SECS`, pushing `triggered` / `recovered`
+    /// transitions to `/watches/events` subscribers.
     pub fn run(self, db: Db) -> Result<()> {
-        let server = std::sync::Arc::new(self.inner);
-        let db = std::sync::Arc::new(std::sync::RwLock::new(db));
+        let server = Arc::new(self.inner);
+        let db = Arc::new(RwLock::new(db));
+        let subscribers: Subscribers = Arc::new(Mutex::new(Vec::new()));
+        let (notify_tx, notify_rx) = mpsc::channel::<()>();
+        {
+            let db = db.clone();
+            let subs = subscribers.clone();
+            std::thread::spawn(move || watch_evaluator(&db, &subs, &notify_rx));
+        }
         let workers = std::thread::available_parallelism()
             .map(|n| n.get().clamp(2, 8))
             .unwrap_or(4);
@@ -84,6 +112,8 @@ impl NescioServer {
         for _ in 0..workers {
             let server = server.clone();
             let db = db.clone();
+            let subs = subscribers.clone();
+            let notify = notify_tx.clone();
             handles.push(std::thread::spawn(move || {
                 while let Ok(mut request) = server.recv() {
                     let method = request.method().as_str().to_string();
@@ -92,6 +122,10 @@ impl NescioServer {
                         Some((p, q)) => (p.to_string(), q.to_string()),
                         None => (url, String::new()),
                     };
+                    if method == "GET" && path == "/watches/events" {
+                        subscribe_events(request, &db, &subs);
+                        continue;
+                    }
                     let body = if request.body_length().unwrap_or(0) > MAX_BODY_BYTES {
                         None
                     } else {
@@ -101,10 +135,11 @@ impl NescioServer {
                             Err(_) => Some(String::new()),
                         }
                     };
+                    let writing = is_write(&method, &path);
                     let (status, payload) = match body {
                         None => (413, json!({"error": "body too large"}).to_string()),
                         Some(b) => {
-                            if is_write(&method, &path) {
+                            if writing {
                                 let mut guard = db.write().expect("db lock poisoned");
                                 handle(&mut guard, &method, &path, &query, &b)
                             } else {
@@ -123,6 +158,10 @@ impl NescioServer {
                         .with_status_code(status)
                         .with_header(header);
                     let _ = request.respond(response);
+                    if writing && status < 400 {
+                        // Any write can move a knowledge horizon.
+                        let _ = notify.send(());
+                    }
                 }
             }));
         }
@@ -131,6 +170,91 @@ impl NescioServer {
         }
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------- watches
+
+/// Background thread: evaluate all watches, emit SSE events on state
+/// transitions, sleep until the next write or heartbeat.
+fn watch_evaluator(db: &RwLock<Db>, subs: &Subscribers, notify: &mpsc::Receiver<()>) {
+    let mut last: BTreeMap<String, bool> = BTreeMap::new();
+    loop {
+        let states = {
+            let guard = db.read().expect("db lock poisoned");
+            check_watches(&guard, now_unix(), DEFAULT_HORIZON_DAYS)
+        };
+        for s in &states {
+            let was = last.get(&s.watch.name).copied();
+            if s.triggered && was != Some(true) {
+                broadcast(subs, &sse_frame("triggered", &state_json(s)));
+            } else if !s.triggered && was == Some(true) {
+                broadcast(subs, &sse_frame("recovered", &state_json(s)));
+            }
+        }
+        last = states
+            .iter()
+            .map(|s| (s.watch.name.clone(), s.triggered))
+            .collect();
+        // The ping keeps intermediaries from timing the stream out and
+        // flushes closed connections out of the subscriber list.
+        broadcast(subs, ": ping\n\n");
+        match notify.recv_timeout(Duration::from_secs(HEARTBEAT_SECS)) {
+            Ok(()) => while notify.try_recv().is_ok() {}, // coalesce bursts
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+/// Answer `GET /watches/events`: register a channel, send the snapshot,
+/// and hand the connection its own thread — a stream that lives for the
+/// life of the client must not occupy a pool worker. The response is
+/// written raw ([`tiny_http::Request::into_writer`]) with a flush per
+/// frame; tiny_http's own response path buffers until the body ends,
+/// which a body that never ends cannot afford.
+fn subscribe_events(request: tiny_http::Request, db: &RwLock<Db>, subs: &Subscribers) {
+    let (tx, rx) = mpsc::channel::<String>();
+    let at = now_unix();
+    let snapshot = {
+        let guard = db.read().expect("db lock poisoned");
+        let states = check_watches(&guard, at, DEFAULT_HORIZON_DAYS);
+        json!({"as_of": at, "watches": states}).to_string()
+    };
+    let _ = tx.send(sse_frame("snapshot", &snapshot));
+    subs.lock().expect("subscribers lock poisoned").push(tx);
+    let mut writer = request.into_writer();
+    std::thread::spawn(move || {
+        let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                      Cache-Control: no-cache\r\nConnection: close\r\n\r\n";
+        let mut send = |bytes: &[u8]| {
+            writer
+                .write_all(bytes)
+                .and_then(|()| writer.flush())
+                .is_ok()
+        };
+        if !send(header.as_bytes()) {
+            return;
+        }
+        while let Ok(frame) = rx.recv() {
+            if !send(frame.as_bytes()) {
+                return; // client gone; the next broadcast prunes the sender
+            }
+        }
+    });
+}
+
+fn broadcast(subs: &Subscribers, frame: &str) {
+    subs.lock()
+        .expect("subscribers lock poisoned")
+        .retain(|tx| tx.send(frame.to_string()).is_ok());
+}
+
+fn sse_frame(event: &str, data: &str) -> String {
+    format!("event: {event}\ndata: {data}\n\n")
+}
+
+fn state_json(s: &WatchState) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "{}".into())
 }
 
 /// Routes that mutate the database and need the exclusive write lock.
@@ -216,6 +340,23 @@ fn route_read(
                 &pred,
             )?;
             Ok(serde_json::to_string(&json!({"result": tri}))?)
+        }
+        ("GET", "/watches") => {
+            let at = at_param(params)?;
+            let states = check_watches(db, at, DEFAULT_HORIZON_DAYS);
+            Ok(serde_json::to_string(
+                &json!({"as_of": at, "watches": states}),
+            )?)
+        }
+        ("GET", "/watches/check") => {
+            let at = at_param(params)?;
+            let states = check_watches(db, at, DEFAULT_HORIZON_DAYS);
+            let triggered: Vec<_> = states.iter().filter(|s| s.triggered).collect();
+            Ok(serde_json::to_string(&json!({
+                "as_of": at,
+                "checked": states.len(),
+                "triggered": triggered,
+            }))?)
         }
         ("GET", "/find") => {
             let q = Query::new(db, at_param(params)?);
@@ -406,8 +547,24 @@ fn route_write(db: &mut Db, method: &str, path: &str, body: &str) -> Result<Stri
                 "ok": true,
                 "evidence_erased": r.evidence_erased,
                 "priors_removed": r.priors_removed,
+                "watches_removed": r.watches_removed,
             })
             .to_string())
+        }
+        ("POST", "/watches") => {
+            let w: Watch = from_body(body)?;
+            db.add_watch(w.clone())?;
+            let state = evaluate_watch(db, &w, now_unix(), DEFAULT_HORIZON_DAYS);
+            Ok(serde_json::to_string(&json!({"ok": true, "state": state}))?)
+        }
+        ("POST", "/watches/remove") => {
+            #[derive(Deserialize)]
+            struct Body {
+                name: String,
+            }
+            let b: Body = from_body(body)?;
+            db.remove_watch(&b.name)?;
+            Ok(json!({"ok": true}).to_string())
         }
         ("POST", "/schema/add-value") => {
             #[derive(Deserialize)]

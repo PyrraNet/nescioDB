@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nesciodb"
-version = "0.7.1"
+version = "0.8.0"
 description = "Python client for nescioDB — the database that knows what it doesn't know."
 readme = "README.md"
 license = { text = "MIT" }

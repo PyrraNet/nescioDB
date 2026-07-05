@@ -36,6 +36,7 @@ Instead of values, you store **claims**: who said what, when, and how reliable t
 | `find` | Which entities *certainly* / *possibly* lie in a range |
 | `join` | Entity pairs matching a relation — each with a probability *and* a three-valued certainty, because joining two regions is itself uncertain |
 | `certainly` | Three-valued predicates: `true` / `possible` / `false` |
+| `watch` | Standing questions — "tell me when knowledge decays past this threshold", with the **knowledge horizon** (the exact date it will fire) predicted in advance, and Server-Sent Events from `nescio serve` |
 
 ## Use cases
 
@@ -68,6 +69,17 @@ BOUND villa_1.price as of 2026-07-03
 ```
 
 Ask again a year later — same command, `--at 2027-07-03` — and the region has widened on its own. Erase a source with `nescio forget-source`, and every derived region widens correctly: there is no aggregate that could forget to forget.
+
+Because decay is deterministic, nescio can tell you **in advance** when it will stop knowing enough — and tell you the moment it happens:
+
+```bash
+nescio watch add mydb --name price_fresh --entity villa_1 --slot price --max-entropy 5.0
+# watch "price_fresh" added
+#   ok   price_fresh   villa_1.price  4.25 bits (threshold 5.00)  fires ~2026-08-10 without new evidence
+
+nescio watch check mydb        # exits 2 when anything fired — cron-ready
+curl -N localhost:7777/watches/events   # or subscribe: Server-Sent Events
+```
 
 Joins compare uncertain regions, so each match carries a probability and a certainty:
 
@@ -136,6 +148,7 @@ mydb/
   schema.json     slots and couplings
   sources.json    reliability, half-life, axiomatic
   priors.json     shared priors
+  watches.json    standing questions (only if you add some)
   log.bin         the evidence log (append-only binary)
 ```
 

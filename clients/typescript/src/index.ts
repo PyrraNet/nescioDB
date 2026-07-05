@@ -249,6 +249,43 @@ export interface Status {
   sources: Source[];
 }
 
+/**
+ * A standing question: fire when an entity's slot decays past a threshold.
+ * Set exactly one of `maxEntropyBits` / `minKnowledge`.
+ */
+export interface Watch {
+  name: string;
+  entity: string;
+  slot: string;
+  /** Fire when entropy exceeds this many bits. */
+  maxEntropyBits?: number;
+  /** Fire when knowledge (1 - entropy/max entropy) drops below this ratio in (0, 1]. */
+  minKnowledge?: number;
+}
+
+/** A watch evaluated at a point in time. */
+export interface WatchState extends Watch {
+  triggered: boolean;
+  thresholdBits?: number;
+  entropyBits?: number;
+  knowledge?: number;
+  /**
+   * The knowledge horizon: when decay alone will trigger this watch (unix
+   * seconds, day granularity). Absent when an axiomatic, non-decaying
+   * source pins the slot forever.
+   */
+  horizon?: number;
+  horizonDate?: string;
+  /** Set when evaluation failed — e.g. an axiom conflict, which triggers the watch. */
+  error?: string;
+}
+
+/** One message from the `/watches/events` stream. */
+export type WatchEvent =
+  | { event: "snapshot"; asOf: number; watches: WatchState[] }
+  | { event: "triggered"; state: WatchState }
+  | { event: "recovered"; state: WatchState };
+
 /** Thrown for any non-2xx response; carries the HTTP status and server message. */
 export class NescioError extends Error {
   readonly status: number;
@@ -517,6 +554,88 @@ export class NescioClient {
     return this.post("/schema/remove-coupling", { name });
   }
 
+  // ------------------------------------------------------------------ watches
+
+  /** Every watch with its current state and knowledge horizon. */
+  async watches(opts: { at?: At } = {}): Promise<{ asOf: number; watches: WatchState[] }> {
+    const j = await this.get("/watches", { at: atOut(opts.at) });
+    return { asOf: j.as_of, watches: (j.watches as any[]).map(mapWatchState) };
+  }
+
+  /**
+   * Register a standing question. Returns the initial state — including
+   * the knowledge horizon: the date decay alone will fire it.
+   */
+  async addWatch(w: Watch): Promise<WatchState> {
+    const j = await this.post("/watches", {
+      name: w.name,
+      entity: w.entity,
+      slot: w.slot,
+      max_entropy_bits: w.maxEntropyBits,
+      min_knowledge: w.minKnowledge,
+    });
+    return mapWatchState(j.state);
+  }
+
+  async removeWatch(name: string): Promise<{ ok: boolean }> {
+    return this.post("/watches/remove", { name });
+  }
+
+  /** Evaluate all watches; returns only the triggered ones. */
+  async checkWatches(
+    opts: { at?: At } = {},
+  ): Promise<{ asOf: number; checked: number; triggered: WatchState[] }> {
+    const j = await this.get("/watches/check", { at: atOut(opts.at) });
+    return {
+      asOf: j.as_of,
+      checked: j.checked,
+      triggered: (j.triggered as any[]).map(mapWatchState),
+    };
+  }
+
+  /**
+   * Subscribe to watch transitions (Server-Sent Events). Yields a
+   * `snapshot` first, then `triggered` / `recovered` states as they
+   * happen. Runs until the server goes away or `opts.signal` aborts.
+   *
+   * ```ts
+   * for await (const ev of db.watchEvents()) {
+   *   if (ev.event === "triggered") notify(ev.state);
+   * }
+   * ```
+   */
+  async *watchEvents(opts: { signal?: AbortSignal } = {}): AsyncGenerator<WatchEvent> {
+    let res: Response;
+    try {
+      res = await this.doFetch(this.base + "/watches/events", {
+        headers: { Accept: "text/event-stream", ...this.headers },
+        signal: opts.signal,
+      });
+    } catch (e) {
+      throw new NescioError(
+        0,
+        `request to ${this.base}/watches/events failed: ${(e as Error).message}`,
+      );
+    }
+    if (!res.ok || !res.body) {
+      throw new NescioError(res.status, `HTTP ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buf += decoder.decode(value, { stream: true });
+      let i: number;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const ev = parseSseFrame(buf.slice(0, i));
+        buf = buf.slice(i + 2);
+        if (ev) yield ev;
+      }
+    }
+  }
+
   // ----------------------------------------------------------------- plumbing
 
   private async get(path: string, params: Record<string, unknown> = {}): Promise<any> {
@@ -679,6 +798,42 @@ function mapSource(j: any): Source {
     halfLifeDays: j.half_life_days ?? undefined,
     axiomatic: j.axiomatic ?? false,
   };
+}
+
+function mapWatchState(j: any): WatchState {
+  return {
+    name: j.name,
+    entity: j.entity,
+    slot: j.slot,
+    maxEntropyBits: j.max_entropy_bits ?? undefined,
+    minKnowledge: j.min_knowledge ?? undefined,
+    triggered: j.triggered,
+    thresholdBits: j.threshold_bits ?? undefined,
+    entropyBits: j.entropy_bits ?? undefined,
+    knowledge: j.knowledge ?? undefined,
+    horizon: j.horizon ?? undefined,
+    horizonDate: j.horizon_date ?? undefined,
+    error: j.error ?? undefined,
+  };
+}
+
+/** One SSE frame -> a WatchEvent; undefined for comments/pings. */
+function parseSseFrame(frame: string): WatchEvent | undefined {
+  let event = "";
+  let data = "";
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  if (!data) return undefined;
+  const j = JSON.parse(data);
+  if (event === "snapshot") {
+    return { event, asOf: j.as_of, watches: (j.watches as any[]).map(mapWatchState) };
+  }
+  if (event === "triggered" || event === "recovered") {
+    return { event, state: mapWatchState(j) };
+  }
+  return undefined;
 }
 
 function mapFit(j: any): FittedDecay {
