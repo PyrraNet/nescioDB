@@ -98,7 +98,10 @@ fn horizon_is_predicted_to_the_day() {
     assert!(!evaluate_watch(&db, &w, h - DAY, DEFAULT_HORIZON_DAYS).triggered);
     assert!(evaluate_watch(&db, &w, h, DEFAULT_HORIZON_DAYS).triggered);
     // Already-triggered watches carry the evaluation time as horizon.
-    assert_eq!(evaluate_watch(&db, &w, h, DEFAULT_HORIZON_DAYS).horizon, Some(h));
+    assert_eq!(
+        evaluate_watch(&db, &w, h, DEFAULT_HORIZON_DAYS).horizon,
+        Some(h)
+    );
 }
 
 #[test]
